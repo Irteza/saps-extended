@@ -1,0 +1,203 @@
+#!/bin/bash
+
+### March 25 Size-Aware Packet Spraying / Load Balancing Script
+
+## File Last Modified: 26-May-2015 4:00 PM (SMI)
+## Author: SMI
+
+num_runs=5
+mice_load=(0.2) ; ##
+#mice_load=(0.4 0.6 0.8 0.9);
+
+## LB_SCHEME : ECMP=EqualCostMultipath; RPS=RandomPacketSpraying; WPS=WeightedPS; WPS-P=WPS-Probabilistic; WFCS=WeightedFlowcellSpraying; UFCS=UnweightedFlowcellSpraying; HPO=HealthyPathPS; SPS=SelectivePathSpraying
+## SPFS=SelectivePathFlowcellSpraying
+##LB_SCHEME=("ECMP" "RPS" "WFCS" "WFCS-P" "UFCS" "WPS" "WPS-P"); ## "UFCS-P" "SAPS" "FLOWBENDER" 
+#LB_SCHEME=("RPS" "ECMP" "SPPS" "WFCS"); ## Healthy Path-Only Packet Spraying
+LB_SCHEME=("SPPS" "SPPS-DASO" "WFCS"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO" "SPPS-DASO"
+##LB_SCHEME=("FLOWBENDER" "ECMP"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO"
+#LB_SCHEME=("SPPS-DASO"); ## SPS == newer SPS with dynamic mapping; SPPS == older version of Selective Path Spraying, with static mapping
+##LB_SCHEME=("RPS" "HPO" "SPS"); ##  "SPS-DASO" SPS-DASO is SPS with Spraying Delay Asymmetry flows, i.e. all DA flows will be sprayed only, and across all spines (no DA flows are hashed)
+
+AlltoAllFlows=0;
+simpleLeftRightFlows=1;
+
+NorthSouthTraffic=0; ## 0 indicates no North-South traffic, 1 indicates existence of North-South traffic
+
+webSearchCDF=1;
+av_fsize=(1141); ## Web Search 	# KB av_fsize=(25 50 100 300) #KB
+SPS_Thresh=100; ## 100KB for Web Search // This threshold decides for SPS whether it can be probabilistically chosen for being hashed to failed link
+#SPS_Thresh_GL2GL=100; ## Special for remapping flows hashed onto link with lesser congestion on downward link
+SPS_Thresh_GL2GL=100000; ## Special for remapping flows hashed onto link with lesser congestion on downward link
+#sim_time=80.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+#FailureDuration=1.8 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+
+sim_time=20.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+FailureDuration=0.49 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+
+#sim_time=5.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+#FailureDuration=0.124 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+
+FailureStartTime=0.01 ; ## when does the failure start? ## Normally set to 0.1
+FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
+
+#FailureStartTime=0.1 ; ## when does the failure start? ## Normally set to 0.1
+#FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
+
+#webSearchCDF=0;
+#av_fsize=(5116); ## Data Mining
+#SPS_Thresh=1000; ## 1MB for Data Mining
+#SPS_Thresh_GL2GL=10000; ## Special for remapping flows hashed onto link with lesser congestion on downward link
+#sim_time=320.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+#FailureDuration=7.8 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+
+FlowcellSize=43; # Previous = 43 ; 1 for PS-Weighted // Specially for Flowcell Spraying - SMI 12-Dec-15
+dctcp_K=(25) ; ## Can modify the DCTCP_K threshold from here (10-May-2016)
+RealisticFailure=1 ; ## 0 for old static failure, 1 for dynamic failure
+
+FailureCase=1; ## 0 means no failure; 1 means partial failure; 2 means full failure... for case 1 or 2: failure occurs between leaf "FailedLeaf" and spine "FailedLinkIndex"
+PutFailedLinkDown=1; ## 30 Jul 2016
+AckOnSamePath=0; ## Decide whether we want our ACKs on the same path as the forward packet
+MultipleFailure=0; ## If true, create 2 simultaneous failures (18-Feb-17)
+
+FailureRatio=10; # 1 (no failure) or 10 (10Gbps for good links, 1Gbps for failed link)
+
+#################################################################################################################################
+
+NorthSouthLoad=0.1 ; ## Offered load for north-south traffic, this is the percentage of the btnk_link that should be offered // 0.01 means 100 Mbps per remote user, 400 Mbps overall
+NorthSouthInterArrival=0; ## The inter-arrival time for North-South flows 0.001, if 0 this indicates that we will not use this
+
+SPS_PoorPathFlow_Multiplier=1; # This will allow us to increase the ratio by which flows are mapped to the poor path probabilistically... Default is 1
+fs_threshold=(10000); ## Web Search ## (1141) 75 685pkts=1MB // 10MB
+##fs_threshold=(2000); ## Data Mining
+
+queueSize=1000; ## BDP*2 = 335 for leaf-spine  ## BDP*2 = 500 for 4-ary fat-tree
+TOPOLOGY="LEAFSPINE"
+link_delay=0.01125 # ms ... Leaf Spine, to get 90 microsec RTT // ##link_delay=0.125 # ms ... Leaf Spine, to get 1 msec RTT
+##TOPOLOGY="FATTREE"
+##link_delay=0.0075
+# ms.... Fat-Tree to get 90 microsecond RTT
+trafficSourceLeftmostRackOnly=0; # If 0, do as normal. If 1, only generate traffic from leftmost rack
+trafficDestinationSingleRack=1; # If 0, do as normal. If 1, only send traffic to leftmost rack on right subtree of topology
+simpleOneLeftRightFlow=0; ## 1 -> 1 flow with size; 2-> 1 timed flow; 3-> 2 timed flows from 2 diff hosts; 4-> 2 sized flows from diff hosts ; 5 -> 4 sized flows from Rack-0 to Rack-2 & 4 sized flows from Rack-1 to Rack-2 
+
+FailedLinkIndex=3;  ## The spine towards where the failure occurs // previously 3
+FailedLeaf=0; # To identify the leaf where the failure starts from - SMI 3-Jan-2016
+#FailureDetectionDelay=(5) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
+TinyMiceThresh=100 ; ## Value in KB of threshold for 'tiny mice'
+
+SecondFailedLinkLeaf=3; ## 18-Feb-17
+SecondFailedLinkSpine=3; ## 18-Feb-17
+NumFailures=1;  ## 20-Feb-17
+
+SRC="TCP/Sack1" ; ## // ##SRC="TCP/Newreno"
+dctcp=1 ; ### 1 for DCTCP; 0 for Sack1
+DupAckThresh=(3) ; # Can modify Duplicate ACK threshold from here (10-May-2016) normal=3
+##switch_Algo="DropTail"
+K=4; ##K=16
+##singleShortFlowSize=1789570; # 100000 # 83350 packets is almost exactly 1Gb ### 1789570 pkts = 2.5 GB
+#singleShortFlowSize=715828; ## 1 GB
+##singleShortFlowSize=357914; ## 0.5 GB
+singleShortFlowSize=500000; ## 0.5 GB (assuming now this is KB value and not numOfPkts)
+##singleShortFlowSize=1000; ##
+#serversPerRack=16; # for oversubscription 1:4
+serversPerRack=4; ## for non-oversubscribed topology
+numToRs=4 ; ## Number of Leaf switches
+numAggs=4 ; ## Number of Spine switches
+numCores=0 ; ## Number of Core switches
+##link_delay=0.025 	# ms.... RTT is 0.2ms and not 0.1ms
+min_rto=0.01 ; # 0.000045
+##paretoShape=1.05
+pkSize=1460; # 1000 # 1460 #960
+getQmonLinkLevelStats=0;
+STATS_START=0;
+STATS_INTR=0.001;
+longFlowThruputStats=0;
+traceAll=0;
+debugMsgs=0;
+bw_endhostTor=10000.0; # currently we want 10Gbps bw between endhost-TOR
+bw_torAgg=10000.0 ; # currently we want 10Gbps bw between TOR-aggregator
+bw_aggCore=10000.0 ; # currently we want 10Gbps bw between aggregator-core
+
+mkdir -p gnuplot_results
+mkdir -p flow_details
+
+for ((c=0; c<${#DupAckThresh[*]}; c++))
+do 
+    for ((b=0; b<${#dctcp_K[*]}; b++))
+    do 
+	for ((a=0; a<${#FailureDetectionDelay[*]}; a++))
+	do 
+	    for ((n=0; n<${#fs_threshold[*]}; n++))
+	    do
+		for ((j=0; j<${#av_fsize[*]}; j++))
+		do
+		    for ((l=0; l<${#LB_SCHEME[*]}; l++))
+		    do
+			printf '#"%s" \n\n' ${LB_SCHEME[$l]} >> "response_times.log"
+			for ((m=0; m<${#mice_load[*]}; m++))
+			do
+			    for ((u=0; u<$num_runs; u++))
+			    do
+				if [ ${u} -eq 0 ] && [ ${l} -eq 0 ]
+				then
+				    flow_trace=1;
+				else
+				    flow_trace=0;
+				fi
+
+				ns size_aware.tcl ${mice_load[$m]} ${av_fsize[$j]} ${LB_SCHEME[$l]} $sim_time $SRC $TOPOLOGY ${fs_threshold[$n]} $serversPerRack $numToRs $numAggs $numCores $link_delay $queueSize $dctcp $min_rto $K $singleShortFlowSize $u $AlltoAllFlows $simpleLeftRightFlows $simpleOneLeftRightFlow $pkSize $webSearchCDF $getQmonLinkLevelStats $STATS_START $STATS_INTR $traceAll $FlowcellSize $FailedLinkIndex $FailureRatio $FailedLeaf $FailureCase $trafficSourceLeftmostRackOnly $trafficDestinationSingleRack $RealisticFailure $FailureStartTime $FailureDuration ${FailureDetectionDelay[$a]} $TinyMiceThresh ${dctcp_K[$b]} ${DupAckThresh[$c]} $NorthSouthTraffic $NorthSouthLoad $NorthSouthInterArrival $SPS_Thresh $SPS_PoorPathFlow_Multiplier $flow_trace $bw_endhostTor $bw_torAgg $bw_aggCore $debugMsgs $SPS_Thresh_GL2GL $AckOnSamePath $PutFailedLinkDown $MultipleFailure $SecondFailedLinkLeaf $SecondFailedLinkSpine $NumFailures $remap_thresh
+
+				##total_lines=$(awk 'END { print NR }' "Out.ns")
+
+				cat "Out.ns" | awk '$23==0 {print $5}' | sort -g > "flow_sorted_awk.tr"
+				total_lines=$(awk 'END { print NR }' "flow_sorted_awk.tr")
+				cat "flow_sorted_awk.tr" | awk -v var="$total_lines" '{print $1 " " NR/var}'  > "fct_cdf.tr"
+				rm "flow_sorted_awk.tr"
+
+				cat "Out.ns" | awk '$23==0 && $21==1 {print $5}' | sort -g > "mice_flow_sorted_awk.tr"
+				total_mice=$(awk 'END { print NR }' "mice_flow_sorted_awk.tr")
+				cat "mice_flow_sorted_awk.tr" | awk -v var="$total_mice" '{print $1 " " NR/var}'  > "fct_mice_cdf.tr"
+				rm "mice_flow_sorted_awk.tr"
+
+				cp Out.ns Out-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u.ns
+				mkdir -p stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+				mv details.txt stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+
+				# cp trac.tr out.tr
+				mv fct_cdf.tr gnuplot_results/fct_cdf_load_${mice_load[$m]}_thresh_${fs_threshold[$n]}_${LB_SCHEME[$l]}-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u.tr
+				mv fct_mice_cdf.tr gnuplot_results/fct_mice_cdf_load_${mice_load[$m]}_thresh_${fs_threshold[$n]}_${LB_SCHEME[$l]}-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u.tr
+				mv Out-*.ns stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+				if [ $flow_trace -eq 1 ]
+				then
+				    mv flow_trace_details.out flow_details/flow_trace_details-load-${mice_load[$m]}.out 
+				fi
+
+				# mv out.tr stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-run-$u
+				# /bin/bash ./linkutil_script > link_util-lb-${LB_SCHEME[$l]}.log
+				# mv link_util-lb-${LB_SCHEME[$l]}.log stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+				mv cwnd*.tr stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+
+				# mv qmon.* stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+				if [ ${AlltoAllFlows} -eq 1 ]
+				then
+				    mv flow_summary.out stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$b]}-dupack-${DupAckThresh[$c]}-run-$u
+				fi
+
+			## if($longFlowThruputStats==1) {
+			##outDir="stats-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-run-$u/"
+			##outFile="Out-load-${mice_load[$m]}-avfs-${av_fsize[$j]}-thresh-${fs_threshold[$n]}-lb-${LB_SCHEME[$l]}-top-$TOPOLOGY-fdd-${FailureDetectionDelay[$a]}-run-$u.ns"					
+			##total_longflows=$(awk 'BEGIN { long_count=0; } { if ($12==1) { long_count += 1; } } END { print long_count }' $outDir$outFile)
+			##echo $total_longflows
+			##cat $outDir$outFile | awk '{if ($12==1) print $9}' | sort -g > $outDir"flow_sorted_awk.tr"
+			##cat $outDir"flow_sorted_awk.tr" | awk -v var="$total_longflows" '{print ($1*8/1000000) " " NR/var}'  > $outDir"fct_long_thru_cdf.tr"
+			##rm $outDir"flow_sorted_awk.tr"
+			##}
+			    done
+			done
+			printf '\n' >> "response_times.log"
+		    done
+		done
+	    done
+	done
+    done
+done
