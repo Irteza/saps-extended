@@ -5,21 +5,22 @@
 ## File Last Modified: 26-May-2015 4:00 PM (SMI)
 ## Author: SMI
 
-num_runs=5
-mice_load=(0.2) ; ##
+num_runs=1
+mice_load=(0.6); ##
 #mice_load=(0.4 0.6 0.8 0.9);
 
 ## LB_SCHEME : ECMP=EqualCostMultipath; RPS=RandomPacketSpraying; WPS=WeightedPS; WPS-P=WPS-Probabilistic; WFCS=WeightedFlowcellSpraying; UFCS=UnweightedFlowcellSpraying; HPO=HealthyPathPS; SPS=SelectivePathSpraying
 ## SPFS=SelectivePathFlowcellSpraying
 ##LB_SCHEME=("ECMP" "RPS" "WFCS" "WFCS-P" "UFCS" "WPS" "WPS-P"); ## "UFCS-P" "SAPS" "FLOWBENDER" 
 #LB_SCHEME=("RPS" "ECMP" "SPPS" "WFCS"); ## Healthy Path-Only Packet Spraying
-LB_SCHEME=("SPPS" "SPPS-DASO" "WFCS"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO" "SPPS-DASO"
+##LB_SCHEME=("SPPS" "SPPS-DASO" "WFCS"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO" "SPPS-DASO"
+LB_SCHEME=("WFCS"); ## 
 ##LB_SCHEME=("FLOWBENDER" "ECMP"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO"
 #LB_SCHEME=("SPPS-DASO"); ## SPS == newer SPS with dynamic mapping; SPPS == older version of Selective Path Spraying, with static mapping
 ##LB_SCHEME=("RPS" "HPO" "SPS"); ##  "SPS-DASO" SPS-DASO is SPS with Spraying Delay Asymmetry flows, i.e. all DA flows will be sprayed only, and across all spines (no DA flows are hashed)
 
-AlltoAllFlows=0;
-simpleLeftRightFlows=1;
+AlltoAllFlows=1;
+simpleLeftRightFlows=0;
 
 NorthSouthTraffic=0; ## 0 indicates no North-South traffic, 1 indicates existence of North-South traffic
 
@@ -31,11 +32,14 @@ SPS_Thresh_GL2GL=100000; ## Special for remapping flows hashed onto link with le
 #sim_time=80.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
 #FailureDuration=1.8 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
-sim_time=20.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
-FailureDuration=0.49 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+#sim_time=20.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+#FailureDuration=0.49 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
-#sim_time=5.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
-#FailureDuration=0.124 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+sim_time=5.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+FailureDuration=0.124 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+
+#sim_time=1.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+#FailureDuration=0.0248 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
 FailureStartTime=0.01 ; ## when does the failure start? ## Normally set to 0.1
 FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
@@ -57,7 +61,7 @@ RealisticFailure=1 ; ## 0 for old static failure, 1 for dynamic failure
 FailureCase=1; ## 0 means no failure; 1 means partial failure; 2 means full failure... for case 1 or 2: failure occurs between leaf "FailedLeaf" and spine "FailedLinkIndex"
 PutFailedLinkDown=1; ## 30 Jul 2016
 AckOnSamePath=0; ## Decide whether we want our ACKs on the same path as the forward packet
-MultipleFailure=0; ## If true, create 2 simultaneous failures (18-Feb-17)
+MultipleFailure=1; ## If true, create 2 simultaneous failures (18-Feb-17)
 
 FailureRatio=10; # 1 (no failure) or 10 (10Gbps for good links, 1Gbps for failed link)
 
@@ -77,17 +81,17 @@ link_delay=0.01125 # ms ... Leaf Spine, to get 90 microsec RTT // ##link_delay=0
 ##link_delay=0.0075
 # ms.... Fat-Tree to get 90 microsecond RTT
 trafficSourceLeftmostRackOnly=0; # If 0, do as normal. If 1, only generate traffic from leftmost rack
-trafficDestinationSingleRack=1; # If 0, do as normal. If 1, only send traffic to leftmost rack on right subtree of topology
+trafficDestinationSingleRack=0; # If 0, do as normal. If 1, only send traffic to leftmost rack on right subtree of topology
 simpleOneLeftRightFlow=0; ## 1 -> 1 flow with size; 2-> 1 timed flow; 3-> 2 timed flows from 2 diff hosts; 4-> 2 sized flows from diff hosts ; 5 -> 4 sized flows from Rack-0 to Rack-2 & 4 sized flows from Rack-1 to Rack-2 
 
-FailedLinkIndex=3;  ## The spine towards where the failure occurs // previously 3
+FailedLinkIndex=0;  ## The spine towards where the failure occurs // previously 3
 FailedLeaf=0; # To identify the leaf where the failure starts from - SMI 3-Jan-2016
 #FailureDetectionDelay=(5) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
 TinyMiceThresh=100 ; ## Value in KB of threshold for 'tiny mice'
 
 SecondFailedLinkLeaf=3; ## 18-Feb-17
 SecondFailedLinkSpine=3; ## 18-Feb-17
-NumFailures=1;  ## 20-Feb-17
+NumFailures=2;  ## 20-Feb-17
 
 SRC="TCP/Sack1" ; ## // ##SRC="TCP/Newreno"
 dctcp=1 ; ### 1 for DCTCP; 0 for Sack1

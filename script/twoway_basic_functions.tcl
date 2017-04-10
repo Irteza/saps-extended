@@ -301,7 +301,7 @@ proc build-exp-off { src dest pktSize burstTime idleTime rate id startTime } {
 #
 # Create Short-lived TCP flows
 #
-proc build-short-lived { src dest pktSize fid node_id startTime tcp_src tcp_sink transfer_size dctcp isElephant flowBender FlowCell FlowcellSize RoundRobin FailureAware FailureRatio FailedLeaf FailedLinkIndex FromFailedLeaf ToFailedLeaf SelSpraying HealthyPathOnly DA_SprayOnly PoorFlow NorthSouthFlow IntraRackFlow FlowFacingMultipleFailures SecondFailedLinkLeaf SecondFailedLinkSpine src_leaf_ind dst_leaf_ind} {
+proc build-short-lived { src dest pktSize fid node_id startTime tcp_src tcp_sink transfer_size dctcp isElephant flowBender FlowCell FlowcellSize RoundRobin FailureAware FailureRatio FailedLeaf FailedLinkIndex FromFailedLeaf ToFailedLeaf SelSpraying HealthyPathOnly DA_SprayOnly PoorFlow NorthSouthFlow IntraRackFlow DAFlow SecondFailedLinkLeaf SecondFailedLinkSpine src_leaf_ind dst_leaf_ind} {
     global ns tick
 
     puts "inside: build-short-lived"
@@ -353,7 +353,8 @@ proc build-short-lived { src dest pktSize fid node_id startTime tcp_src tcp_sink
 
     $tcp set secondFailedLinkLeaf_ $SecondFailedLinkLeaf
     $tcp set secondFailedLinkSpine_ $SecondFailedLinkSpine
-    $tcp set flowFacingMultipleFailures_ $FlowFacingMultipleFailures  
+    ##$tcp set flowFacingMultipleFailures_ $FlowFacingMultipleFailures 
+    $tcp set DA_Flow_ $DAFlow  
 
     $tcp set srcLeaf_ $src_leaf_ind
     $tcp set destLeaf_ $dst_leaf_ind

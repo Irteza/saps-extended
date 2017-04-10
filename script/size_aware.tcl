@@ -77,6 +77,15 @@ set flowBender 0;
 
 set LB_SCHEME1 $LB_SCHEME;
 
+if {$MultipleFailure == 1} {
+    if {$NumFailures == 2} {
+	set failedLinkLeafs(0) $FailedLeaf
+	set failedLinkSpines(0) $FailedLinkIndex
+	set failedLinkLeafs(1) $SecondFailedLinkLeaf
+	set failedLinkSpines(1) $SecondFailedLinkSpine
+    }
+}
+
 #if {$LB_SCHEME == "FLOWBENDER"} {
 #    set LB_SCHEME "ECMP";
 #    if { $debugMsgs==1 } {
@@ -2045,11 +2054,11 @@ if { $simpleLeftRightFlows == 1} {
 	##$FlowcellSize $RoundRobin $FailureAware $FailureRatio $FailedLinkIndex $fromFailedLeaf $toFailedLeaf $SelectiveSpraying $HealthyPathOnly $DA_SprayOnly $PoorFlow 0 0
 
 	## New parameters 8-Mar-2017
-	set flowFacingMultFailures 0;
+	set DAFlow 0;
 	set scndFailedLinkLeaf 0;
 	set scndFailedLinkSpine 0;
 
-	set stcp [build-short-lived $host($srcSink) $host($destSink) $pkSize $short_flow_id $srcSink $global_time $SRC $SINK $transfer_size $dctcp_enable $isElephant $flowBender $FlowCell $FlowcellSize $RoundRobin $FailureAware $FailureRatio $FailedLeaf $FailedLinkIndex $fromFailedLeaf $toFailedLeaf $SelectiveSpraying $HealthyPathOnly $DA_SprayOnly $PoorFlow 0 0 $flowFacingMultFailures $scndFailedLinkLeaf $scndFailedLinkSpine $sourceLeaf $destLeaf] ;
+	set stcp [build-short-lived $host($srcSink) $host($destSink) $pkSize $short_flow_id $srcSink $global_time $SRC $SINK $transfer_size $dctcp_enable $isElephant $flowBender $FlowCell $FlowcellSize $RoundRobin $FailureAware $FailureRatio $FailedLeaf $FailedLinkIndex $fromFailedLeaf $toFailedLeaf $SelectiveSpraying $HealthyPathOnly $DA_SprayOnly $PoorFlow 0 0 $DAFlow $scndFailedLinkLeaf $scndFailedLinkSpine $sourceLeaf $destLeaf] ;
 
 	## TRACE-OPTIMAL (start-time, sizeBytes, source, destination, N/S_flow)
 	if { $flow_trace == 1 } {
@@ -2160,6 +2169,7 @@ if {$AlltoAllFlows == 1} {
     puts "I am alive and kicking!!!! 9-1"
 
     ## Some random numbers are based on the type of topology chosen...
+
     if {$TOPOLOGY == "LEAFSPINE"} {
 
 	set rng_leaf [new RNG]; 
@@ -2203,6 +2213,12 @@ if {$AlltoAllFlows == 1} {
 	set dst_count($x) 0
     }
 
+    ## TODO: Check to see if we are calculating the probabilities correctly for multiple failures
+    ## If two failures occur, the specific leaf-leaf pair could be facing:
+    ## Case 1: No failures (upto 2 DA spines)
+    ## Case 2: 1 failure (upto 1 DA spine)
+    ## Case 3: 2 failures (no DA spines possible)
+
     ## Calculate probabilities for PoorFlow or notPoorFlow
     if { ($FailureCase==1 || $FailureCase==2) && $SelectiveSpraying==1 } {
 	if {$TOPOLOGY == "LEAFSPINE"} {
@@ -2235,6 +2251,15 @@ if {$AlltoAllFlows == 1} {
 	    ## handle the probabilities to manage those flows that have 2 failures in its paths....
 	    ## furthermore handle the case of 1 failure in paths... and 1 other failure whose effects will be felt....
 	    if { $MultipleFailure==1 } {
+
+		## Possibilities for now:
+		## 0 direct failures, 2 DA spines ... FFL and 2FL
+		## 1 direct failure, 1 DA spine ... ... FFL and 2FL
+		## 2 direct failures, no DA spines ... FFL and 2FL --> Probably already managed.
+
+		## set index [expr ($src_leaf_ind * $numToRs) + $dst_leaf_ind]
+		## leafPairNumFailures($index);
+
 		## $totalCapacityTwoFailures;
 		set chanceSprayWeakLinks_FFL [new RandomVariable/Uniform]
 		set chanceSprayWeakLinks_2FL [new RandomVariable/Uniform]
@@ -2244,6 +2269,26 @@ if {$AlltoAllFlows == 1} {
 		$chanceSprayWeakLinks_2FL set min_ -0.5
 		$chanceSprayWeakLinks_FFL set max_ [expr $totalCapacityTwoFailures-1+0.5]
 		$chanceSprayWeakLinks_2FL set max_ [expr (($numToRs-1)*$totalCapacityTwoFailures)-1+0.5] ; ## confused... should this be multiplied by (numAggs-1) or (numAggs-2) ??
+		
+		## Either store the number of failures and number of DA spines for each leaf-leaf combo separately, and use that stored info 
+		## accordingly to generate the necessary probabilities...
+		## or calculate per flow...
+
+		## instantiate a matrix storing the number of direct failures faced by each srcLeaf-destLeaf pair
+		for { set leaf_i 0 } { $leaf_i < $numToRs } { incr leaf_i } {
+		    for { set leaf_j 0 } { $leaf_j < $numToRs } { incr leaf_j } {
+			set index [expr ($leaf_i * $numToRs) + $leaf_j]
+			set leafPairNumFailures($index) 0;
+			if { $leaf_i != $leaf_j } {
+			    for { set k 0 } { $k < [array size failedLinkLeafs] } { incr k } {
+				if { $failedLinkLeafs($k)==$leaf_i || $failedLinkLeafs($k)==$leaf_j } {
+				    incr leafPairNumFailures($index);
+				}
+			    }
+			}
+		    }
+		}
+		## at the moment, we don't analyze the number of DA spines, we may just assume that for each LL pair, DA_spines = NumFailures - leafPairNumFailures
 	    }
 
 	    set chanceHashGLGL [new RandomVariable/Uniform]
@@ -2252,19 +2297,27 @@ if {$AlltoAllFlows == 1} {
 	    $chanceHashGLGL set max_ [expr ($numAggs-1+0.5)]
 
 	    if { $MultipleFailure==1 } {
+		set chanceSprayAffectedSpines_GLGL [new RandomVariable/Uniform]
+		$chanceSprayAffectedSpines_GLGL use-rng $rng_poorLink
+
 		$chanceSprayAffectedSpines_GLGL set min_ -0.5
-		$chanceSprayAffectedSpines_GLGL set max_ [expr ($numAggs-2+0.5)] ; ## numAggs - 2; since we expect 2 spines to be affected here.... 
+		$chanceSprayAffectedSpines_GLGL set max_ [expr ($numAggs-3+0.5)] ; ## since we expect 2 spines to be DA affected here, so chance is 1/(numAggs-2) .... 
+
+		set chanceHashAffectedSpine [new RandomVariable/Uniform]
+		$chanceHashAffectedSpine use-rng $rng_poorLink
+
+		$chanceHashAffectedSpine set min_ -0.5
+		$chanceHashAffectedSpine set max_ [expr ($numAggs-2+0.5)] ; ## since we expect 1 DA spine here (and 1 spine is failed otherwise) , so chance is 1/(numAggs-1) .... 
 	    }
+
+	} elseif {$TOPOLOGY == "FATTREE"} {
+	    ## TODO:
+	} else {
+	    ## TODO:
 	}
-
-    } elseif {$TOPOLOGY == "FATTREE"} {
-	## TODO:
-    } else {
-	## TODO:
     }
-    ##{}
 
-#    puts "I am alive and kicking!!!! 9-2"
+    #    puts "I am alive and kicking!!!! 9-2"
 
     ##while {$global_time <= [expr $sim_time/2]}
     while {$global_time <= [expr $sim_time/40]} {	
@@ -2387,7 +2440,8 @@ if {$AlltoAllFlows == 1} {
 		    set dst_ind [expr round([expr [$index value]])]
 		}
 	    }
-	}
+	} 
+	## end of if for flow-type
 
 	set transfer_size [expr ceil ([$rv_nbytes value])] ; ## common for all types of flows...
 
@@ -2397,12 +2451,13 @@ if {$AlltoAllFlows == 1} {
 	    set isElephant 0;
 	}
 
-#	puts "I am alive and kicking!!!! 9-3"
+	#	puts "I am alive and kicking!!!! 9-3"
 
 	set PoorFlow 0; ## Default behavior
 	set fromFailedLeaf 0; ## default 11-May-16
 	set toFailedLeaf 0; ## default 11-May-16
-	set flowFacingMultipleFailures 0; ## 19-Feb-17
+	##set flowFacingMultipleFailures 0; ## 19-Feb-17
+	set DAFlow 0; ## set this to true for all DA flows
 
 	if {$TOPOLOGY == "LEAFSPINE"} {
 
@@ -2417,16 +2472,16 @@ if {$AlltoAllFlows == 1} {
 		if { $MultipleFailure==1 } {
 		    if { $src_leaf_ind==$FailedLeaf || $src_leaf_ind==$SecondFailedLinkLeaf } {
 			set fromFailedLeaf 1; # indicates the flow is from a failed leaf
-			if { $src_leaf_ind==$FailedLeaf && $src_leaf_ind==$SecondFailedLinkLeaf } {
-			    set flowFacingMultipleFailures 1;
-			}
+			#if { $src_leaf_ind==$FailedLeaf && $src_leaf_ind==$SecondFailedLinkLeaf } {
+			#set flowFacingMultipleFailures 1;
+			#}
 		    } 
 
 		    if { $dst_leaf_ind==$FailedLeaf || $dst_leaf_ind==$SecondFailedLinkLeaf } {
 			set toFailedLeaf 1; # indicates the flow is going to a failed leaf
-			if { $dst_leaf_ind==$FailedLeaf && $dst_leaf_ind==$SecondFailedLinkLeaf } {
-			    set flowFacingMultipleFailures 1;
-			}
+			#if { $dst_leaf_ind==$FailedLeaf && $dst_leaf_ind==$SecondFailedLinkLeaf } {
+			#set flowFacingMultipleFailures 1;
+			#}
 		    } 
 
 		} else {
@@ -2448,44 +2503,63 @@ if {$AlltoAllFlows == 1} {
 		    }
 		}
 
-		#Agent/TCP set multipleFailure_ $MultipleFailure
-		##Agent/TCP set secondFailedLinkLeaf_ $SecondFailedLinkLeaf
-		##Agent/TCP set secondFailedLinkSpine_ $SecondFailedLinkSpine
-		# $totalCapacityTwoFailures
-		# $chanceSprayWeakLinks_FFL 
-		# $chanceSprayWeakLinks_2FL
-		# $chanceSprayAffectedSpines_GLGL
+		## TODO: Use this stuff:
+		## leafPairNumFailures([expr ($src_leaf_ind * $numToRs) + $dst_leaf_ind]); ## [array size failedLinkLeafs];
 
-#		puts "I am alive and kicking!!!! 9-4"
+		## Question: Are we doing all of the below for full failure as well (28-March-2017)... this is problematic if we are creating flows
+		## for the poor path, which is not possible in the case of full failure (unless the poor path means a DA flow)
 
 		## Manage the Poor Flow mapping (use probabilities)
 		if { $SelectiveSpraying==1 && $HealthyPathOnly==0 } {
 		    if { $RealisticFailure==1 && $failureDetected==1 } {
 			##if { ($DynamicMapping==1 || ($transfer_size < $SPS_Thresh)) && ($flowTypeRand != 1) } { }
 			if { $flowTypeRand != 1 } {
-			    if { $DynamicMapping==1 || (($toFailedLeaf==1 || $fromFailedLeaf==1) && ($transfer_size < $SPS_Thresh)) || ( ($toFailedLeaf==0 && $fromFailedLeaf==0) && ($transfer_size < $SPS_Thresh_GL2GL) )} {
+			    
+			    ## add a clause allowing large flows for the multipleFailure case and when it's either 2FL or FFL, but then inside the if block, make sure we never
+			    ## accidentally assign a large flow as a PoorFlow, but only as a DA flow... do this for both 2FL and FFL cases
+
+			    if { $DynamicMapping==1 || (($toFailedLeaf==1 || $fromFailedLeaf==1) && ($transfer_size < $SPS_Thresh)) || ( ($toFailedLeaf==0 && $fromFailedLeaf==0) && ($transfer_size < $SPS_Thresh_GL2GL) )
+				 || ( $MultipleFailure==1 && (($toFailedLeaf==1 || $fromFailedLeaf==1) && ($transfer_size < $SPS_Thresh_GL2GL)) ) } {
 				if { $toFailedLeaf==1 && $fromFailedLeaf==1 } {
-				    if { $MultipleFailure==1 } {
-					### do what is needed here....
-					set flowFacingMultipleFailures 1;
-					set hashFlow [expr round([expr [$chanceSprayWeakLinks_FFL value]])] ; ## 2 direct paths are affected....
-					if { $hashFlow < [expr 2 * $poorLinkCapacity] } {
-					    set PoorFlow 1; 
+				    if { $MultipleFailure==1 && $transfer_size < $SPS_Thresh } {
+					## all cases here, no DA spine flows (either the flow faces 2 failures, or both failures lie on the same overall leaf-2-leaf path
+					if { $failedLinkSpines(0) == $failedLinkSpines(1) } {
+					    ## we apply 1/31 probability for the weak link, since both failures lie on the same overall leaf-to-leaf path
+					    set hashFlow [expr round([expr [$chanceHashFFL value]])]
+					    if { $hashFlow < $poorLinkCapacity } {
+						set PoorFlow 1; ## no DA spines here
+					    }  
+					} else {
+					    set hashFlow [expr round([expr [$chanceSprayWeakLinks_FFL value]])] ; ## 2 direct paths are affected....
+					    if { $hashFlow < [expr 2 * $poorLinkCapacity] } {
+						set PoorFlow 1; ## no DA spines here
+					    }
 					}
 				    }
 				} elseif { $toFailedLeaf==1 } {
 				    if { $FailureCase==1 } {
 					if { $MultipleFailure==1 } {
-					    ### do what is needed here....
-					    if { $flowFacingMultipleFailures==1 } {
+					    ##if { $flowFacingMultipleFailures==1 } { }
+					    if { $leafPairNumFailures([expr ($src_leaf_ind * $numToRs) + $dst_leaf_ind])==2 && $transfer_size < $SPS_Thresh } {
 						set hashFlow [expr round([expr [$chanceSprayWeakLinks_2FL value]])] ; ## 2 direct paths are affected....
 						if { $hashFlow < [expr 2 * $poorLinkCapacity] } {
-						    set PoorFlow 1; 
+						    set PoorFlow 1; ## no DA spines here
 						}
 					    } else {
 						set hashFlow [expr round([expr [$chanceHash2FL value]])]
-						if { $hashFlow < $poorLinkCapacity } {
+						if { $hashFlow < $poorLinkCapacity && $transfer_size < $SPS_Thresh } {
 						    set PoorFlow 1; 
+						} else {
+						    ## 28-March: Decide whether this is to be sent to the DA spine, or whether it is sprayed over the unaffected & healthy spines only
+						    ## 29-March: added the check to see if both failures share the same spine, if so, no need for DA flows
+						    if { ($DA_SprayOnly==1 && $DA_HashSome==0) || $failedLinkSpines(0)==$failedLinkSpines(1) } { 
+							## do nothing...
+						    } else { 
+							set hashFlow [expr round([expr [$chanceHashAffectedSpine value]])]
+							if { $hashFlow < 1 } {
+							    set DAFlow 1; ## added 28-March-17
+							}
+						    }
 						}
 					    }
 					} else {
@@ -2498,16 +2572,27 @@ if {$AlltoAllFlows == 1} {
 				} elseif { $fromFailedLeaf==1 } {
 				    if { $FailureCase==1 } {
 					if { $MultipleFailure==1 } {
-					    ### do what is needed here....
-					    if { $flowFacingMultipleFailures==1 } {
+					    ##if { $flowFacingMultipleFailures==1 } {}
+					    if { $leafPairNumFailures([expr ($src_leaf_ind * $numToRs) + $dst_leaf_ind])==2 && $transfer_size < $SPS_Thresh } {
 						set hashFlow [expr round([expr [$chanceSprayWeakLinks_FFL value]])] ; ## 2 direct paths are affected....
 						if { $hashFlow < [expr 2 * $poorLinkCapacity] } {
 						    set PoorFlow 1; 
 						}
 					    } else {
 						set hashFlow [expr round([expr [$chanceHashFFL value]])]
-						if { $hashFlow < $poorLinkCapacity } {
+						if { $hashFlow < $poorLinkCapacity && $transfer_size < $SPS_Thresh } {
 						    set PoorFlow 1; 
+						} else {
+						    ## 28-March: Decide whether this is to be sent to the DA spine, or whether it is sprayed over the unaffected & healthy spines only
+						    ## 29-March: added the check to see if both failures share the same spine, if so, no need for DA flows
+						    if { ($DA_SprayOnly==1 && $DA_HashSome==0) || $failedLinkSpines(0)==$failedLinkSpines(1) } { 
+							## do nothing...
+						    } else { 
+							set hashFlow [expr round([expr [$chanceHashAffectedSpine value]])]
+							if { $hashFlow < 1 } {
+							    set DAFlow 1; ## added 28-March-17
+							}
+						    }
 						}
 					    }
 					} else {
@@ -2518,23 +2603,26 @@ if {$AlltoAllFlows == 1} {
 					}
 				    }
 				} else {
-				    if { $MultipleFailure==1 } {
-					### do what is needed here....
+				    ## This block means the flow is neither FFL or 2FL
+				    ## Handle the possibility of both non-direct failures having a common spine... in that case, we are hashing to only 1 spine for DA flows (not 2)
+				    if { $MultipleFailure==1 && $failedLinkSpines(0)!=$failedLinkSpines(1) } {
 					set hashFlow [expr round([expr [$chanceSprayAffectedSpines_GLGL value]])]
 					if { $hashFlow < 2 } { 
 					    if { $DA_SprayOnly==1 && $DA_HashSome==0 } {
 						## do nothing...
 					    } else {
 						set PoorFlow 1; ## GL to GL flows being hashed 24-June-2016 // do same for full failure, then do all this for all-to-all flows scenario as well
+						set DAFlow 1; ## added 28-March-17
 					    }
 					} 
 				    } else {
-					set hashFlow [expr round([expr [$chanceHashGLGL value]])]
+					set hashFlow [expr round([expr [$chanceHashGLGL value]])]; ## this works for single failure, and mult failure when both indirect failures share same spine
 					if { $hashFlow < 1 } { 
 					    if { $DA_SprayOnly==1 && $DA_HashSome==0 } {
 						## do nothing...
 					    } else {
 						set PoorFlow 1; ## GL to GL flows being hashed 24-June-2016 // do same for full failure, then do all this for all-to-all flows scenario as well
+						set DAFlow 1; ## added 28-March-17
 					    }
 					} 
 				    }
@@ -2542,12 +2630,12 @@ if {$AlltoAllFlows == 1} {
 			    }
 			}
 		    }
-#		    puts "I am alive and kicking!!!! 9-5"
+		    #		    puts "I am alive and kicking!!!! 9-5"
 		} 
-#		puts "I am alive and kicking!!!! 9-6"
+		#		puts "I am alive and kicking!!!! 9-6"
 	    }
 
-#	    puts "I am alive and kicking!!!! 9-7"
+	    #	    puts "I am alive and kicking!!!! 9-7"
 
 	} elseif {$TOPOLOGY == "FATTREE"} {
 	    ## TODO
@@ -2555,7 +2643,7 @@ if {$AlltoAllFlows == 1} {
 	    ## TODO
 	}
 
-#	puts "I am alive and kicking!!!! 9-8"
+	#	puts "I am alive and kicking!!!! 9-8"
 
 	set transfer_size [expr $transfer_size * 1000.0];# $transfer_size * 1024.0 (just changed it, 27-Apr-PM) ## July 02, 2016
 	##set transfer_size [expr $transfer_size * ($pkSize+40)]; ## Used from 27 June onwards
@@ -2563,7 +2651,7 @@ if {$AlltoAllFlows == 1} {
 	
 	set isIntraRack [expr $flowTypeRand % 2]; ## $flowTypeRand is 1 for intra rack and either 0 or 2 otherwise....
 
-	set stcp [build-short-lived $host($src_ind) $host($dst_ind) $pkSize $short_flow_id $sink $global_time $SRC $SINK $transfer_size $dctcp_enable $isElephant $flowBender $FlowCell $FlowcellSize $RoundRobin $FailureAware $FailureRatio $FailedLeaf $FailedLinkIndex $fromFailedLeaf $toFailedLeaf $SelectiveSpraying $HealthyPathOnly $DA_SprayOnly $PoorFlow 0 $isIntraRack $flowFacingMultipleFailures $SecondFailedLinkLeaf $SecondFailedLinkSpine $src_leaf_ind $dst_leaf_ind]
+	set stcp [build-short-lived $host($src_ind) $host($dst_ind) $pkSize $short_flow_id $sink $global_time $SRC $SINK $transfer_size $dctcp_enable $isElephant $flowBender $FlowCell $FlowcellSize $RoundRobin $FailureAware $FailureRatio $FailedLeaf $FailedLinkIndex $fromFailedLeaf $toFailedLeaf $SelectiveSpraying $HealthyPathOnly $DA_SprayOnly $PoorFlow 0 $isIntraRack $DAFlow $SecondFailedLinkLeaf $SecondFailedLinkSpine $src_leaf_ind $dst_leaf_ind]
 
 
 	## TRACE-OPTIMAL (start-time, sizeBytes, source, destination, N/S_flow)
