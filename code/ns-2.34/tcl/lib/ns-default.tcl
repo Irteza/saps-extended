@@ -1075,6 +1075,8 @@ Agent/TCP set failureDuration_ 0.0 ; ## If zero, then assume failure goes on til
 Agent/TCP set failureDetectionDelay_ 0.0 ;
 Agent/TCP set numUplinks 2 ; ## Default 9-Mar-16
 
+Agent/TCP set DA_Flow_ 0 ; ## Default 4-April-17
+
 ##  These variables are for weighted flowcell spraying & healthy-path ~ selective spraying - SMI 13-Mar-16
 Agent/TCPSink set realisticFailure_ 0
 Agent/TCPSink set ACK_onSamePath_ 0 ; ### SMI 16 July 2016

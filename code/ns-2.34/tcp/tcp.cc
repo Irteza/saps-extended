@@ -83,7 +83,7 @@ TcpAgent::TcpAgent()
 	  failureRatio_(1), failedLinkLeaf_(0), failedLinkIndex_(0), failureAware_(0), selectiveSpraying_(0), healthyPathOnly_(0), DA_sprayOnly_(0), poorPathFlow_(0), originallyHashed_(0), 
 	  realisticFailure_(0), failureCase_(0), failureDetected_(0), failureStartTime_(0.0), failureDuration_(0.0), failureDetectionDelay_(0.0),
 	  fromFailedLeaf_(0), toFailedLeaf_(0), northSouthFlow_(0), intraRackFlow_(0), dynamicMapping_(0), dynamicMappingThreshold_(0), dynamicMappingThresholdGL2GL_(0), flowBender_(0),
-	  multipleFailure_(0), numFailures_(0), secondFailedLinkLeaf_(0), secondFailedLinkSpine_(0), flowFacingMultipleFailures_(0), srcLeaf_(0), destLeaf_(0), toggleWeakSpines_(0), numDirectFailures_(0)
+	  multipleFailure_(0), numFailures_(0), secondFailedLinkLeaf_(0), secondFailedLinkSpine_(0), DA_Flow_(0), srcLeaf_(0), destLeaf_(0), toggleWeakSpines_(0), numDirectFailures_(0)
 {
 #ifdef TCP_DELAY_BIND_ALL
         // defined since Dec 1999.
@@ -153,7 +153,9 @@ TcpAgent::TcpAgent()
 	bind("numFailures_", &numFailures_); // 20-Feb-17
 	bind("secondFailedLinkLeaf_", &secondFailedLinkLeaf_);  // 18-Feb-17
 	bind("secondFailedLinkSpine_", &secondFailedLinkSpine_);  // 18-Feb-17
-	bind("flowFacingMultipleFailures_", &flowFacingMultipleFailures_);  // 19-Feb-17
+	//bind("flowFacingMultipleFailures_", &flowFacingMultipleFailures_);  // 19-Feb-17
+	bind("DA_Flow_", &DA_Flow_);  // 19-Feb-17
+
 
 	bind("srcLeaf_", &srcLeaf_);  // 24-Feb-17
 	bind("destLeaf_", &destLeaf_);  // 24-Feb-17
@@ -225,7 +227,8 @@ TcpAgent::delay_bind_init_all()
 	delay_bind_init_one("numFailures_"); // 20-Feb
 	delay_bind_init_one("secondFailedLinkLeaf_");  // 18-Feb-17
 	delay_bind_init_one("secondFailedLinkSpine_");  // 18-Feb-17
-	delay_bind_init_one("flowFacingMultipleFailures_");  // 18-Feb-17
+	//delay_bind_init_one("flowFacingMultipleFailures_");  // 18-Feb-17
+	delay_bind_init_one("DA_Flow_");  // 27-Mar-17
 
 	delay_bind_init_one("srcLeaf_");  // 24-Feb-17
 	delay_bind_init_one("destLeaf_");  // 24-Feb-17
@@ -389,7 +392,9 @@ TcpAgent::delay_bind_dispatch(const char *varName, const char *localName, TclObj
 
 	if (delay_bind(varName, localName, "secondFailedLinkLeaf_", &secondFailedLinkLeaf_, tracer)) return TCL_OK; // 18-Feb-17
 	if (delay_bind(varName, localName, "secondFailedLinkSpine_", &secondFailedLinkSpine_, tracer)) return TCL_OK; // 18-Feb-17
-	if (delay_bind(varName, localName, "flowFacingMultipleFailures_", &flowFacingMultipleFailures_, tracer)) return TCL_OK; // 19-Feb-17
+	//if (delay_bind(varName, localName, "flowFacingMultipleFailures_", &flowFacingMultipleFailures_, tracer)) return TCL_OK; // 19-Feb-17
+	if (delay_bind(varName, localName, "DA_Flow_", &DA_Flow_, tracer)) return TCL_OK; // 27-Mar-17
+
 
 	if (delay_bind(varName, localName, "srcLeaf_", &srcLeaf_, tracer)) return TCL_OK; // 24-Feb-17
 	if (delay_bind(varName, localName, "destLeaf_", &destLeaf_, tracer)) return TCL_OK; // 24-Feb-17
@@ -855,7 +860,7 @@ void TcpAgent::output(int seqno, int reason)
 			rfactor = 0;
 
 			// 20-Feb-17
-			if(multipleFailure_ && numFailures_ > 0) {
+			if(multipleFailure_ && (numFailures_ > 1)) {
 				failedLinkLeafs = new int[numFailures_];
 				failedLinkSpines = new int[numFailures_];
 
@@ -874,12 +879,17 @@ void TcpAgent::output(int seqno, int reason)
 				} 
 			}
 
-	/*
+	/* CHALLENGE: 28-March
 
-	failedLinkLeafs, srcLeaf_, destLeaf_; // 24-feb-17 -- have to manage for these new variables, and also check for the total capacity and poorlinkcapacity, to make sure that
-	we account for the fact that every separate src-leaf and dest-leaf pair will have a separate value for these.... 
+	  Another case: perhaps already managed, wherein, we have a flow that is both FFL and 2FL, and this means either
+	  (a) both failures share the same spine, thus there are no DA flows with this scenario, and 1 specific path contains both failures on its way
+	  (b) don't share the same spine, so 1 particular leaf-leaf combo faces 2 direct failures, and that combo has no DA flows
 
-	  for weighted schemes, if multipleFailure_ is true, make sure we do the relevant weighting for both spines (and of course, it may be only 1 spine counted twice) --- check if the weights
+	  Also, have to check for correctness of WFCS code, it is not working at the moment - 28-March-17
+	 */
+
+	/*	
+	  For weighted schemes, if multipleFailure_ is true, make sure we do the relevant weighting for both spines (and of course, it may be only 1 spine counted twice) --- check if the weights
 	  are being correctly used, also see if our weights calculation is done rightly as well
 
 	  for SPPS, we have to make sure if multipleFailure_ is true, that (1) we do not spray healthy spine flows onto failure affected spines; (2) spray poor link flows across both affected spines (check
@@ -890,22 +900,14 @@ void TcpAgent::output(int seqno, int reason)
 	 */
 
 			/*
-			  6-March-2017
-			  Currently: Should recheck each if block, to see if logic is correct; want to make sure that we can create a DA-Spine hashed flow even if it that srcLeaf+destLeaf is also facing a direct failure.
-			  For this we may need to add a new variable to TCP to allow us to identify it as a DA-Spine flow or something similar....
-			  Along with this, we need to be able to spray flow that are not Poor-Path or DA-Spine flows over all available healthy spines (including DA-spines) if we run SPPS-DASO.
-			  This will enable us to compare the impact of delay asymmetry affected flows much easier.
-
-			  We also have to recheck the way flows are initialized in the size_aware file, and allow for the DA-spine flows even when toFailedLeaf or fromFailedLeaf is true.
-			  quickly go through logic of the other parts of our code, so we know things are tight.
 			  Also, enable all left flows to send to the rightmost rack, and of course replicate changes made to all-to-all part of traffic generation to the left-to-right piece of code, making sure
 			  that new expected variables for build-short-lived are also passed properly.
-
-			 */
+			*/
 
 			if(failureAware_ && (fromFailedLeaf_ || toFailedLeaf_)) { // Weighted LB Scheme Initialization
 				if(roundRobin_) {
 					if(selectiveSpraying_) { // HPO or SPS or SPPS
+						/* 29-March-17: This section is where there is a possibility of DA flows, where numDirectFailures_ is 1. When it is 2, no DA flows */
 						if(poorPathFlow_) {
 							if(multipleFailure_) {
 								for(int i=0; i < numFailures_; i++) {
@@ -914,23 +916,26 @@ void TcpAgent::output(int seqno, int reason)
 										break;
 									}
 								}
-								// 3-Mar-2017
-								// TODO-NOW: Have to reconfirm if this is what executes for GL-to-GL flows that are intended for "affected spine". If so, will the same code be executed
-								// at initialization? We have to cater to the case where a specific leaf-to-leaf combination will face 1 failed link (maybe partially failed)
-								// and 1 spine affected by delay asymmetry... how will we manage that?? We will have to make sure that we can have 3 sets of flows: those that are hashed or
-								// sprayed to the partially failed link, those that are sprayed across the completely healthy spines, and those that are hashed on the healthy but affected spine
 							}
 							else {
 								linkID_ = failedLinkIndex_;
 							}
 							originallyHashed_ = 1; // 14 July 2016
+						} else if(DA_Flow_ && multipleFailure_) { /* DA spine flow, we have to set it to that spine which is an indirect failure for this src-leaf/dest-leaf combo */
+							for(int failure=0; failure<numFailures_; failure++) {
+								if(failedLinkLeafs[failure]!=srcLeaf_ && failedLinkLeafs[failure]!=destLeaf_) {
+									linkID_ = failedLinkSpines[failure];
+									break;
+								}
+							}
 						} else {
-							/* if multiple failures, find first spine that is not involved in any direct link failure for this srcLeaf+destLeaf combination */
+							/* if multiple failures, find first spine that is not involved in any of the failures (previously it was any failure involving this src-leaf/dest-leaf pair */
 							if(multipleFailure_) {
 								for(int i=0; i < numUplinks; i++) {
 									int spineIsFine=1;
 									for(int j=0; j<numFailures_; j++) {
-										if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && i==failedLinkSpines[j]) {
+										if(i==failedLinkSpines[j]) {
+											// TODO: Add this clause (failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) when we know the scheme is SPPS-DASO
 											spineIsFine=0;
 											break;
 										}
@@ -986,22 +991,13 @@ void TcpAgent::output(int seqno, int reason)
 							uplinkWeights[i] = 10;
 							totalUplinkWeights += uplinkWeights[i];
 						}					
-					} else {
-						// if(selectiveSpraying_ && poorPathFlow_) {
-						// 	linkID_ = failedLinkIndex_; // case of SPS, some flows are hashed onto the "less-used-path"
-						// 	originallyHashed_ = 1; // 14 July 2016
-						// } // commented on 29 July
+					} else { /* 29-March-17: This section is where the numDirectFailures_ is 0 (thus there are 2 DA spines) */
 
-						if(selectiveSpraying_) { /* this indicates that this flow is directed to the spine affected by delay asymmetry */
-							if(poorPathFlow_) {
+						if(selectiveSpraying_) { 
+							if(poorPathFlow_) {  /* this indicates that this flow is directed to the spine affected by delay asymmetry */
 #ifdef debug_tcp_smi
 								printf("In TCP.cc : GL to GL hashed flow.... COOL!!!\n");
 #endif
-								/* this succeeding 'if' statement is where we need to expand so that we can include the case where the flow is actually either from-failed-leaf 
-								 or to-failed-leaf and also faces the scenario of 1 of its spines facing delay asymmetry as well... 
-								 -- we need to incorporate necessary changes at flow initialization at the TCL layer, and also make changes for handling this case within the
-								 piece of code which is true for (from-failed-leaf || to-failed-leaf)
-								*/
 								if(multipleFailure_) {
 									for(int i=0; i < numFailures_ ; i++) {
 										if(failedLinkLeafs[i]!=srcLeaf_ && failedLinkLeafs[i]!=destLeaf_) {
@@ -1053,17 +1049,69 @@ void TcpAgent::output(int seqno, int reason)
 #endif
 		} // end of IF for the first packet...
 
+		/*
+		  Important things left for multiple failure scenarios (30-March-2017):
+		  (1) Fix WFCS at 3 places: size_aware.tcl initialization, above these lines at 1st packet, and below these lines as well.
+		  --> Have to ask why we allow all this code below to run again for the 1st packet? Do we really need it to be this way???
+		  --> check to see if the large flows that are now allowed to be DA flows, etc... are also being catered for (when they are either FFL or 2FL)
+		 */
+
 		if(failureAware_ == 0) { // Unweighted Flowcell Spraying (UFS) or Unweighted Packet Spraying (UPS)
 			if (ndatapack_ % flowcellSizePkts_ == 0){
 				linkID_ = (linkID_ + 1) % numUplinks; //linkID_++; //if (linkID_ > failedLink_) linkID_ = 0;
 			}
-		} else { // Failure Aware (WFCS or WPS, or SPPS/HPPS)
+		} else { // Failure Aware (WFCS or WPS, or SPPS/SPS/HPO/SPPS-DASO)
 			if(realisticFailure_) {
 				if(roundRobin_) {
 					if(failureDetected_) {
 						if(failureCase_==1) { // partial failure
 							if(selectiveSpraying_) { // HPO, SPS or SPPS
-								if(poorPathFlow_) { // SPS or SPPS (Poor or Less-Used_Path) flow
+								if(DA_Flow_ && multipleFailure_) { /* The case of a DA spine flow which is also FFL or 2FL, or perhaps not from either */
+									// I don't think we need to handle DASO here, since DASO will not have flows assigned to DA spine
+									if(dynamicMapping_ && (ndatabytes_ > dynamicMappingThresholdGL2GL_)) {
+										DA_Flow_ = 0; // this is no longer a DA flow, now make it a healthy links flow
+										linkID_ = (linkID_ + 1) % numUplinks; // go to the next port
+
+										/* For later: We may need to incorporate more variables (threshold-type) to decide whether DA spines are actually DA at all? */
+										for(int i=linkID_; i < (linkID_ + numUplinks); i++) {
+											int spineIsFine=1;
+											int port = i % numUplinks;
+											for(int j=0; j<numFailures_; j++) {
+												//if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && i==failedLinkSpines[j]) {
+												if(port==failedLinkSpines[j]) {
+													spineIsFine=0;
+													break;
+												}
+											}
+											if(spineIsFine) {
+												linkID_ = port;
+												break;
+											}
+										}
+									} else { // DA Flow, either not dynamic mapping, or dynamic but still within the threshold
+										if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) {
+											if((numFailures_ - numDirectFailures_)!=1) { // no need to change the linkID_ value if this value is 1
+												// loop by starting at the next linkID_ across all uplinks, and search for the next spine that is not directly failed
+												int port = (linkID_ + 1) % numUplinks;
+												int foundNextDASpine = 0;
+												for(int i = port; i < (port + numUplinks); i++) {
+													for(int j=0; j < numFailures_ ; j++) {
+														if((i % numUplinks)==failedLinkSpines[j]) {
+															if(failedLinkLeafs[j]!=srcLeaf_ && failedLinkLeafs[j]!=destLeaf_) {
+																linkID_ = i % numUplinks;
+																foundNextDASpine = 1;
+																break;
+															}
+														}
+													}
+													if(foundNextDASpine) {
+														break;
+													}
+												}
+											}
+										}
+									}
+								} else if(poorPathFlow_) { // SPS or SPPS (Poor or Less-Used_Path) flow
 									if(dynamicMapping_) {
 										int thresh = 0;
 										if(fromFailedLeaf_ || toFailedLeaf_) {
@@ -1073,15 +1121,11 @@ void TcpAgent::output(int seqno, int reason)
 										}
 										if(ndatabytes_ > thresh) {
 //if( ((fromFailedLeaf_ || toFailedLeaf_) && (ndatabytes_ > dynamicMappingThreshold_)) || ((!fromFailedLeaf_ && !toFailedLeaf_) && (ndatabytes_ > (100*dynamicMappingThreshold_)))) {
-											poorPathFlow_ = 0; // remap towards flows that are sprayed
+											poorPathFlow_ = 0; // remap poor link flows towards flows that are sprayed
 
 											linkID_ = (linkID_ + 1) % numUplinks; // this executes for both multi (as default case) and single failure
 											if(multipleFailure_) {
-												/* this is where we remap the poor-flow or less-used-spine DA flow, to the healthy spines 
-												   (Q1) Do we need some info on whether this is a poor link flow or a DA less-used-path flow ??
-												   (Q2) We may need to incorporate more variables in if statement when we use thresholds to decide whether DA affected spines
-												   are really affected at all ??
-												 */
+												/* We may need to incorporate more variables (threshold-type) to decide whether DA spines are actually DA at all? */
 												for(int i=0; i < numUplinks; i++) {
 													int spineIsFine=1;
 													for(int j=0; j<numFailures_; j++) {
@@ -1101,11 +1145,10 @@ void TcpAgent::output(int seqno, int reason)
 													linkID_ = (linkID_ + 1) % numUplinks;
 												}
 											}
-										} else { // this is the poor path (or less-used DA spine) flow, continuing on its path
-											if(multipleFailure_) { //if(multipleFailure_ && flowFacingMultipleFailures_) {
+										} else { // this is the poor path flow, continuing on its path
+											if(multipleFailure_) { // This should work, if no new spine found, it will use old linkID_ value as before
 												if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) { // toggle between weak spines...
-													// toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
-													for(int j=0; j<numFailures_; j++) {
+													for(int j=0; j<numFailures_; j++) { // toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
 														if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j] != linkID_) {
 															linkID_ = failedLinkSpines[j];
 															break;
@@ -1116,23 +1159,21 @@ void TcpAgent::output(int seqno, int reason)
 												linkID_ = failedLinkIndex_; // works for both multi and single failure...
 											}
 										}
-									} else { // not dynamic mapping
-										if(multipleFailure_) { // && flowFacingMultipleFailures_
+									} else { // not dynamic mapping (but still PoorPath chosen)
+										if(multipleFailure_) { // This should work, if no new spine found, it will use old linkID_ value as before
 											if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) { // toggle between weak spines...
-												// toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
-												for(int j=0; j<numFailures_; j++) {
+												for(int j=0; j<numFailures_; j++) { // toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
 													if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j] != linkID_) {
 														linkID_ = failedLinkSpines[j];
 														break;
 													}
 												}
 											}
-
 										} else {
 											linkID_ = failedLinkIndex_;
 										}
 									}
-								} else { // SPS or SPPS ...  not a Poor (or Less-Used) Path Flow
+								} else { // not a Poor (or Less-Used) Path Flow :: SPS, SPPS, SPPS-DASO or maybe HPO
 									if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) {
 										linkID_ = (linkID_ + 1) % numUplinks;
 										if(multipleFailure_) { // Have to toggle onto next healthy spine ..  // && flowFacingMultipleFailures_
@@ -1140,12 +1181,14 @@ void TcpAgent::output(int seqno, int reason)
 												int spineIsFine=1;
 												int spine = i % numUplinks;
 												for(int j=0; j<numFailures_; j++) {
-													//if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && spine==failedLinkSpines[j]) {
-													if(spine==failedLinkSpines[j]) { // stricter, i.e. not allowing to spray over potential DA-affected spines
-														if(healthyPathOnly_==0 && DA_sprayOnly_==0) { // || (fromFailedLeaf_ || toFailedLeaf_)
-															spineIsFine=0;
+													if(spine==failedLinkSpines[j]) { 
+														if(healthyPathOnly_==0 && DA_sprayOnly_==0) { 
+															spineIsFine=0; // Plain SPPS: stricter, not allow spray over DA-affected spines
 															break;
-														}
+														} else if(failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_){
+															spineIsFine=0; // case of either SPPS-DASO or HPO .. less scrutiny
+															break;
+														} else { /* nothing here*/ }
 													}
 												}
 												if(spineIsFine) {
@@ -1153,9 +1196,7 @@ void TcpAgent::output(int seqno, int reason)
 													break;
 												}
 											}
-
-										} else {
-											// linkID_ = (linkID_ + 1) % numUplinks;
+										} else {											
 											if(linkID_ == failedLinkIndex_) { 
 												if((healthyPathOnly_==0 && DA_sprayOnly_==0) || (fromFailedLeaf_ || toFailedLeaf_)) {
 													//if((fromFailedLeaf_ || toFailedLeaf_)) { // commented on 24-June-16, since now we r doing this for all flows
@@ -1167,7 +1208,7 @@ void TcpAgent::output(int seqno, int reason)
 									}
 								}
 							} else { // WPS/WFS
-								if(ndatapack_ % flowcellSizePkts_ == 0) {
+								if(ndatapack_ % flowcellSizePkts_ == 0) { // should we add the clause ndatapack_ > 0 ?? asking on 30-March
 									
 									if(multipleFailure_) { // Have to toggle onto next spine .. if healthy, OK, if not, check if time has come...
 										if(ndatapack_ % flowCellMod_ == 0 && ndatapack_ > 0) { // assign first weak spine now

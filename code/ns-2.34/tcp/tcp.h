@@ -484,7 +484,8 @@ protected:
 	int numDirectFailures_; // 06-Mar-17
 	int secondFailedLinkLeaf_;
 	int secondFailedLinkSpine_;
-	int flowFacingMultipleFailures_;
+	//int flowFacingMultipleFailures_;
+	int DA_Flow_; // added on 27-Mar-17
 	int toggleWeakSpines_; // will use to toggle between failed spines -- no binding needed.. 25-feb-17
 
 	int northSouthFlow_; // indicates whether this is a North South flow
