@@ -38,7 +38,7 @@
 #include "agent.h"
 #include "packet.h"
 
-#define debug_tcp_smi 1
+//#define debug_tcp_smi 1
 
 //class EventTrace;
 

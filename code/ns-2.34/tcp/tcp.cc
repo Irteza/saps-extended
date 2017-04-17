@@ -854,11 +854,13 @@ void TcpAgent::output(int seqno, int reason)
 #ifdef debug_tcp_smi
 			printf("DEBUG to DEBUG \n");
 			printf("DEBUG-0: 1st PKT of FLOW: failureRatio_=%d, failedLinkIndex_=%d, failureAware_=%d numUplinks=%d \n", failureRatio_, failedLinkIndex_, failureAware_, numUplinks);
+			printf("DEBUG-0: 1st PKT of FLOW: multipleFailure_=%d, numFailures_=%d ", multipleFailure_, numFailures_);
 #endif
 			uplinkWeights = new int[numUplinks];
 			linkID_ = numUplinks - 1;
 			rfactor = 0;
 
+			// for future, we need to make number of failures completely flexible, maybe 3 or 4 or more
 			// 20-Feb-17
 			if(multipleFailure_ && (numFailures_ > 1)) {
 				failedLinkLeafs = new int[numFailures_];
@@ -878,6 +880,9 @@ void TcpAgent::output(int seqno, int reason)
 					}
 				} 
 			}
+#ifdef debug_tcp_smi
+			printf("DEBUG-0: 1st PKT of FLOW: numDirectFailures_=%d \n", numDirectFailures_);
+#endif
 
 	/* CHALLENGE: 28-March
 
@@ -903,7 +908,6 @@ void TcpAgent::output(int seqno, int reason)
 			  Also, enable all left flows to send to the rightmost rack, and of course replicate changes made to all-to-all part of traffic generation to the left-to-right piece of code, making sure
 			  that new expected variables for build-short-lived are also passed properly.
 			*/
-
 			if(failureAware_ && (fromFailedLeaf_ || toFailedLeaf_)) { // Weighted LB Scheme Initialization
 				if(roundRobin_) {
 					if(selectiveSpraying_) { // HPO or SPS or SPPS
@@ -950,13 +954,17 @@ void TcpAgent::output(int seqno, int reason)
 								linkID_ = (failedLinkIndex_ + 1) % numUplinks; // SMI JUl 29
 							}
 						}
-					} else { // WPS, WFCS && ??
-						
+					} else { // WPS, WFCS && ??						
 						if(multipleFailure_) {
 							rfactor = (numUplinks - numDirectFailures_) * failureRatio_; /* here we should minus the numOfFailures with this srcLeaf_ & destLeaf_  */
 						} else {
 							rfactor = (numUplinks - 1) * failureRatio_;
 						}
+
+#ifdef debug_tcp_smi
+						printf("DEBUG-0.1: 1st PKT of FLOW: WFCS rfactor=%d \n", rfactor);
+#endif
+
 					}
 				} else { // WPS-P, WFCS-P ??
 
@@ -1032,6 +1040,9 @@ void TcpAgent::output(int seqno, int reason)
 									linkID_ = (failedLinkIndex_ + 1) % numUplinks; // SMI JUl 29
 								}
 							}
+						} else { // 17-April -- for WFCS ?? no direct failures on this (src leaf - dest leaf) combination
+							failureRatio_ = 1; // we do not incorporate any failure in our algo in this case
+							rfactor = numUplinks - 1; // the turn of the failed link comes after rfactor flowcells...
 						}
 					}
 				} else { // failure_unaware
@@ -1054,7 +1065,7 @@ void TcpAgent::output(int seqno, int reason)
 		  (1) Fix WFCS at 3 places: size_aware.tcl initialization, above these lines at 1st packet, and below these lines as well.
 		  --> Have to ask why we allow all this code below to run again for the 1st packet? Do we really need it to be this way???
 		  --> check to see if the large flows that are now allowed to be DA flows, etc... are also being catered for (when they are either FFL or 2FL)
-		 */
+		 */		
 
 		if(failureAware_ == 0) { // Unweighted Flowcell Spraying (UFS) or Unweighted Packet Spraying (UPS)
 			if (ndatapack_ % flowcellSizePkts_ == 0){
@@ -1208,9 +1219,48 @@ void TcpAgent::output(int seqno, int reason)
 									}
 								}
 							} else { // WPS/WFS
+
+								// #CheckingWFCS working code here
 								if(ndatapack_ % flowcellSizePkts_ == 0) { // should we add the clause ndatapack_ > 0 ?? asking on 30-March
-									
 									if(multipleFailure_) { // Have to toggle onto next spine .. if healthy, OK, if not, check if time has come...
+#ifdef debug_tcp_smi
+										printf("DEBUG-Multiple Failures: Inside FailureCase==1!! numUplinks=%d flowCellMod_=%d \n", numUplinks, flowCellMod_);
+										printf("toggle-Weak-Spines=%d, numDirectFailures_=%d ndatapack_=%d \n", toggleWeakSpines_, numDirectFailures_, (int) ndatapack_);
+#endif
+										//// NEW LOGIC
+										linkID_ = (linkID_ + 1) % numUplinks; // go to next link...
+
+										if(numDirectFailures_ > 0) {
+											for(int i = linkID_; i < (numUplinks + linkID_); i++) {
+												int spineIsFine=1;
+												int spine = i % numUplinks;
+												for(int j=0; j<numFailures_; j++) {
+													if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && spine==failedLinkSpines[j]) {
+														spineIsFine=0;
+														break;
+													}
+												}
+
+												if((ndatapack_ % flowCellMod_ == 0) && (ndatapack_ > 0) || toggleWeakSpines_) {
+													if(spineIsFine==0) { // assign first weak spine now
+														linkID_ = spine;
+														if(++toggleWeakSpines_ == numDirectFailures_) {
+															toggleWeakSpines_ = 0;
+															flowCellMod_ = flowCellMod_ + (flowcellSizePkts_ * numDirectFailures_) + (flowcellSizePkts_ * rfactor);
+														}
+														break;
+													}
+												} else {
+													if(spineIsFine) {
+														linkID_ = spine;
+														break;
+													}
+												}
+											}
+										}
+										/// END of NEW LOGIC
+
+										/*
 										if(ndatapack_ % flowCellMod_ == 0 && ndatapack_ > 0) { // assign first weak spine now
 											for(int j=0; j<numFailures_; j++) {
 												if(failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_)  {
@@ -1249,6 +1299,7 @@ void TcpAgent::output(int seqno, int reason)
 												}
 											}
 										}
+										*/
 
 										// int searchForNewSpine = 1;
 										// while(searchForNewSpine) {
@@ -1357,8 +1408,37 @@ void TcpAgent::output(int seqno, int reason)
 #endif
 
 					}
-				} else { // Probabilistics Schemes, Later
-					// TODO 
+				} else { // Probabilistics Schemes ... WPS-P, WFCS-P
+					if(failureDetected_) {
+						if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
+							int randomNumber = Random::integer(totalUplinkWeights);
+#ifdef debug_tcp_smi
+							printf("SMI-TEST: Probabilistic spraying -> randomNumber = %d \n", randomNumber);
+#endif
+							int counter = 0, weightsAdded = 0;
+							linkID_ = -1; 
+
+							do {
+								weightsAdded = weightsAdded + uplinkWeights[counter];
+								if(randomNumber < weightsAdded) {
+									linkID_ = counter;
+								} else {
+									counter++;
+								}
+							} while(linkID_ < 0 && counter < numUplinks);
+			
+							if(linkID_ < 0) { // Just a check to make sure we have chosen a valid port
+								linkID_ = Random::integer(numUplinks);
+							}
+#ifdef debug_tcp_smi
+							printf("SMI-TEST: linkID_=%d flowID=%d flowcellNum=%d ndatapack_=%d \n",linkID_, int(fid_), (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
+#endif
+						}
+					} else {
+						if (ndatapack_ % flowcellSizePkts_ == 0){
+							linkID_ = (linkID_ + 1) % numUplinks; //linkID_++; //if (linkID_ > failedLink_) linkID_ = 0;
+						}
+					}
 				}
 			} else { // case of not being realistic failure
 				if(roundRobin_) { // Deterministic Spraying
@@ -1422,7 +1502,7 @@ void TcpAgent::output(int seqno, int reason)
 		hf->flowcellSeq_ = ndatapack_ / flowcellSizePkts_; // Flowcell number in flow.
 
 #ifdef debug_tcp_smi
-		printf("tcph->linkID=%d \n", tcph->linkID);
+		printf("tcph->linkID=%d Flow-ID=%d flowcellNum=%d ndatapack_=%d \n", tcph->linkID, (int) fid_, (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
 #endif
 
 	}

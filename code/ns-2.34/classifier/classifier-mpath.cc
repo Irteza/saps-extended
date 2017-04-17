@@ -87,7 +87,77 @@ public:
 
 		//printf("Debug Message in MPath Classifier..!! \n");
 
-		if(perflow_ || (packetSpraying_==0 && fh->isElephant()==0)) { // || checkpathid_
+		if(packetSpraying_) { // do PS
+			//printf("DEBUG: nodeid=%d seqno=%d linkID=%d ndatapack_=%d\n",nodeid_,tcph->seqno_,tcph->linkID,tcph->pkts_sent_so_far_);	
+#ifdef debug_mpath_smi
+			if(nodeid_==0) {
+				printf("PktType=%s fh->failureDetected=%d at = %f \t", packet_info.name(ch->ptype()) , fh->failureDetected(),  (float) Scheduler::instance().clock());
+			}
+#endif
+
+			if(selectiveSpraying_ && fh->failureDetected()) {
+#ifdef debug_mpath_smi
+				if(nodeid_==0) {
+					printf("SelectiveSpraying==TRUE && Failure is Detected: linkID=%d !!\n ", tcph->linkID);
+				}
+#endif
+				//int fail = tcph->linkID - 1;
+				//if(fail < 0) fail += (maxslot_ + 1);
+				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
+				cl = ns_;
+
+				//while(slot_[cl]==0 && ns_ !=fail) {
+				//cl = ns_++;
+				//ns_ %= (maxslot_ + 1);
+				//}
+
+			} else {
+				int fail = ns_;
+				do {
+					cl = ns_++;
+					ns_ %= (maxslot_ + 1);
+				} while (slot_[cl] == 0 && ns_ != fail);
+#ifdef debug_mpath_smi
+				if(nodeid_==0) {
+					printf("Normal RPS Code running at Node %d: Slot Chosen=%d !!\n ", nodeid_, cl);
+				}
+#endif
+			}
+		} else if(flowcellSpraying_) {
+			// WFCS, WFCS-P, UFCS, WPS 
+
+			if(failureCase_==2) {
+				//printf("failureCase_ is Full Failure... \n");
+				ns_ = tcph->linkID;
+				int fail = ns_;
+				cl = ns_++;
+				while (slot_[cl] == 0 && ns_ != fail) {
+			        	cl = ns_++;
+                                	ns_ %= (maxslot_ + 1);
+				}
+			} else {
+				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
+				cl = ns_;
+			}
+
+#ifdef debug_mpath_smi
+			printf("Flowcell Spraying LB: tcph->linkID=%d, cl=%d, SeqNo=%d, FlowcellNum=%d, ", tcph->linkID, cl, tcph->seqno(), fh->flowcellSeq());
+			printf("FlowID=%d \n", h->flowid());
+#endif
+			/*if (nodeid_ == 0){
+				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
+				cl = ns_;
+			} else {
+				int fail = ns_;
+				do {
+			        	cl = ns_++;
+                                	ns_ %= (maxslot_ + 1);
+
+				} while (slot_[cl] == 0 && ns_ != fail);
+
+			}*/			
+
+		} else if(perflow_ || (packetSpraying_==0 && fh->isElephant()==0)) { // || checkpathid_
 #ifdef debug_mpath_smi
 				printf("Normal ECMP Code running !!\n ");
 #endif
@@ -143,77 +213,6 @@ public:
 			} while (slot_[cl] == 0 && ms_ != fail);
 
 		//} else if(packetSpraying_ || fh->isElephant()) {
-		} else if(packetSpraying_) { // do PS
-			//printf("DEBUG: nodeid=%d seqno=%d linkID=%d ndatapack_=%d\n",nodeid_,tcph->seqno_,tcph->linkID,tcph->pkts_sent_so_far_);	
-#ifdef debug_mpath_smi
-			if(nodeid_==0) {
-				printf("PktType=%s fh->failureDetected=%d at = %f \t", packet_info.name(ch->ptype()) , fh->failureDetected(),  (float) Scheduler::instance().clock());
-			}
-#endif
-
-			if(selectiveSpraying_ && fh->failureDetected()) {
-#ifdef debug_mpath_smi
-				if(nodeid_==0) {
-					printf("SelectiveSpraying==TRUE && Failure is Detected: linkID=%d !!\n ", tcph->linkID);
-				}
-#endif
-				//int fail = tcph->linkID - 1;
-				//if(fail < 0) fail += (maxslot_ + 1);
-				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
-				cl = ns_;
-
-				//while(slot_[cl]==0 && ns_ !=fail) {
-				//cl = ns_++;
-				//ns_ %= (maxslot_ + 1);
-				//}
-
-			} else {
-				int fail = ns_;
-				do {
-					cl = ns_++;
-					ns_ %= (maxslot_ + 1);
-				} while (slot_[cl] == 0 && ns_ != fail);
-#ifdef debug_mpath_smi
-				if(nodeid_==0) {
-					printf("Normal RPS Code running at Node %d: Slot Chosen=%d !!\n ", nodeid_, cl);
-				}
-#endif
-			}
-		} else if(flowcellSpraying_) {
-			// WFCS, WFCS-P, UFCS, WPS 
-
-			if(failureCase_==2) {
-				//printf("failureCase_ is Full Failure... \n");
-				ns_ = tcph->linkID;
-				int fail = ns_;
-				cl = ns_++;
-				while (slot_[cl] == 0 && ns_ != fail) {
-			        	cl = ns_++;
-                                	ns_ %= (maxslot_ + 1);
-				}
-			} else {
-				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
-				cl = ns_;
-			}
-
-			/*if (nodeid_ == 0){
-				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
-				cl = ns_;
-			} else {
-				int fail = ns_;
-				do {
-			        	cl = ns_++;
-                                	ns_ %= (maxslot_ + 1);
-
-				} while (slot_[cl] == 0 && ns_ != fail);
-
-			}*/
-			
-#ifdef debug_mpath_smi
-			printf("Flowcell Spraying LB: tcph->linkID=%d, cl=%d, SeqNo=%d, FlowcellNum=%d, ", tcph->linkID, cl, tcph->seqno(), fh->flowcellSeq());
-			printf("FlowID=%d \n", h->flowid());
-#endif
-
 		} else {
 			// Does such a case exist, not ECMP, not PS, then what ??
 #ifdef debug_mpath_smi
