@@ -5,16 +5,16 @@
 ## File Last Modified: 26-May-2015 4:00 PM (SMI)
 ## Author: SMI
 
-num_runs=1
-mice_load=(0.6); ##
-#mice_load=(0.4 0.6 0.8 0.9);
+num_runs=5
+#mice_load=(0.4); ##
+mice_load=(0.2 0.4 0.6 0.8 0.9);
 
 ## LB_SCHEME : ECMP=EqualCostMultipath; RPS=RandomPacketSpraying; WPS=WeightedPS; WPS-P=WPS-Probabilistic; WFCS=WeightedFlowcellSpraying; UFCS=UnweightedFlowcellSpraying; HPO=HealthyPathPS; SPS=SelectivePathSpraying
 ## SPFS=SelectivePathFlowcellSpraying
 ##LB_SCHEME=("ECMP" "RPS" "WFCS" "WFCS-P" "UFCS" "WPS" "WPS-P"); ## "UFCS-P" "SAPS" "FLOWBENDER" 
 #LB_SCHEME=("RPS" "ECMP" "SPPS" "WFCS"); ## Healthy Path-Only Packet Spraying
 ##LB_SCHEME=("SPPS" "SPPS-DASO" "WFCS"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO" "SPPS-DASO"
-LB_SCHEME=("WFCS"); ## 
+LB_SCHEME=("WFCS" "SPPS" "WFCS-P" "SPPS-DASO"); ## 
 ##LB_SCHEME=("FLOWBENDER" "ECMP"); ## "RPS" "ECMP" "HPO" "SPS" "SPS-DASO"
 #LB_SCHEME=("SPPS-DASO"); ## SPS == newer SPS with dynamic mapping; SPPS == older version of Selective Path Spraying, with static mapping
 ##LB_SCHEME=("RPS" "HPO" "SPS"); ##  "SPS-DASO" SPS-DASO is SPS with Spraying Delay Asymmetry flows, i.e. all DA flows will be sprayed only, and across all spines (no DA flows are hashed)
@@ -28,24 +28,27 @@ webSearchCDF=1;
 av_fsize=(1141); ## Web Search 	# KB av_fsize=(25 50 100 300) #KB
 SPS_Thresh=100; ## 100KB for Web Search // This threshold decides for SPS whether it can be probabilistically chosen for being hashed to failed link
 #SPS_Thresh_GL2GL=100; ## Special for remapping flows hashed onto link with lesser congestion on downward link
-SPS_Thresh_GL2GL=100000; ## Special for remapping flows hashed onto link with lesser congestion on downward link
+SPS_Thresh_GL2GL=1000000; ## Special for remapping flows hashed onto link with lesser congestion on downward link
 #sim_time=80.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
 #FailureDuration=1.8 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
-#sim_time=20.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
-#FailureDuration=0.49 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+sim_time=20.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+FailureDuration=0.49 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
-sim_time=5.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
-FailureDuration=0.124 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+#sim_time=5.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
+#FailureDuration=0.124 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
 #sim_time=1.0 ## Previous tests used 20.0 ## Currently will generate traffic for 1/40th of the sim_time
 #FailureDuration=0.0248 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
+#FailureDuration=0 ; ## If 0, no end to failure, otherwise there is a specific time for failure ending ## 0.8
 
-FailureStartTime=0.01 ; ## when does the failure start? ## Normally set to 0.1
-FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
-
-#FailureStartTime=0.1 ; ## when does the failure start? ## Normally set to 0.1
+#FailureStartTime=0.001 ; ## when does the failure start? ## Normally set to 0.1
+#FailureDetectionDelay=(10) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
+#FailureStartTime=0.01 ; ## when does the failure start? ## Normally set to 0.1
 #FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
+
+FailureStartTime=0.1 ; ## when does the failure start? ## Normally set to 0.1
+FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 25 50 75 used // 200, 100, 3000 used //
 
 #webSearchCDF=0;
 #av_fsize=(5116); ## Data Mining
@@ -117,7 +120,7 @@ STATS_START=0;
 STATS_INTR=0.001;
 longFlowThruputStats=0;
 traceAll=0;
-debugMsgs=0;
+debugMsgs=1;
 bw_endhostTor=10000.0; # currently we want 10Gbps bw between endhost-TOR
 bw_torAgg=10000.0 ; # currently we want 10Gbps bw between TOR-aggregator
 bw_aggCore=10000.0 ; # currently we want 10Gbps bw between aggregator-core

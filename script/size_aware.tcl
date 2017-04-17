@@ -97,7 +97,7 @@ if {$MultipleFailure == 1} {
 #set SINK           [lindex $argv 5]; 
 #set QUEUE          [lindex $argv 6];
 
-set Details [open details.txt w]
+set Details [open "details.txt" w]
 
 #puts "I am alive and kicking!!!!"
 puts "Num-of-Sims=$run_i; All-to-All=$AlltoAllFlows; Simple-Left-Right-Flows=$simpleLeftRightFlows;"
@@ -460,6 +460,7 @@ Agent/TCPSink set realisticFailure_ $RealisticFailure
 if { $debugMsgs==1 } {
     puts "DEBUG: FlowcellSize=$FlowcellSize; RoundRobin=$RoundRobin; FailedLinkIndex=$FailedLinkIndex; FailureRatio=$FailureRatio; FailureAware=$FailureAware; FailureCase=$FailureCase; "
     puts "DEBUG: RealisticFailure=$RealisticFailure; FailureStartTime=$FailureStartTime; FailureDuration=$FailureDuration; FailureDetectionDelay=$FailureDetectionDelay;"
+    puts "DEBUG: MultipleFailure=$MultipleFailure; NumFailures=$NumFailures;"
 }
 
 # Statistics
@@ -2217,7 +2218,7 @@ if {$AlltoAllFlows == 1} {
     ## If two failures occur, the specific leaf-leaf pair could be facing:
     ## Case 1: No failures (upto 2 DA spines)
     ## Case 2: 1 failure (upto 1 DA spine)
-    ## Case 3: 2 failures (no DA spines possible)
+    ## Case 3: 2 failures (no DA spines possible)    
 
     ## Calculate probabilities for PoorFlow or notPoorFlow
     if { ($FailureCase==1 || $FailureCase==2) && $SelectiveSpraying==1 } {
@@ -2642,8 +2643,6 @@ if {$AlltoAllFlows == 1} {
 	} else {
 	    ## TODO
 	}
-
-	#	puts "I am alive and kicking!!!! 9-8"
 
 	set transfer_size [expr $transfer_size * 1000.0];# $transfer_size * 1024.0 (just changed it, 27-Apr-PM) ## July 02, 2016
 	##set transfer_size [expr $transfer_size * ($pkSize+40)]; ## Used from 27 June onwards

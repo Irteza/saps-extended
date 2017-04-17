@@ -1,0 +1,60 @@
+#!/bin/bash
+
+types=("fct" "fct_mice");
+percentile=(90 99 999) ; # AWK for 90th Percentile FCT: # AWK for 99th Percentile FCT:
+mice_load=(0.2 0.4 0.6 0.8 0.9)
+fs_threshold=(10000); ## Web Search ## (1141) 75 685pkts=1MB
+#LB_SCHEME=("RPS" "ECMP" "WFCS" "WPS" "HPO" "SPS" "SPFS"); ## Selective Path Flowcell/Packet Spraying 
+#LB_SCHEME=("RPS" "ECMP" "WPS" "WFCS" "SPPS"); ## Healthy Path-Only Packet Spraying
+LB_SCHEME=("WFCS" "WFCS-P" "SPPS" "SPPS-DASO"); ## Healthy Path-Only Packet Spraying
+FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 200
+dctcp_K=(25) ; ## Can modify the DCTCP_K threshold from here (10-May-2016)
+DupAckThresh=(3) ; # Can modify Duplicate ACK threshold from here (10-May-2016)
+num_runs=5
+
+echo "Percentile for FCTs"
+
+for ((e=0; e<${#types[*]}; e++))
+do
+    for ((d=0; d<${#DupAckThresh[*]}; d++))
+    do 
+	for ((c=0; c<${#dctcp_K[*]}; c++))
+	do 
+	    for ((b=0; b<${#percentile[*]}; b++))
+	    do
+		echo "Percentile = ${percentile[$b]} !!"
+		for ((a=0; a<${#FailureDetectionDelay[*]}; a++))
+		do 
+		    for ((n=0; n<${#fs_threshold[*]}; n++))
+		    do
+			for ((l=0; l<${#LB_SCHEME[*]}; l++))
+			do
+			    printf '#"%s" \n\n' ${LB_SCHEME[$l]} >> "${percentile[$b]}_pct_${types[$e]}.txt"
+			    for ((m=0; m<${#mice_load[*]}; m++))
+			    do
+				for ((u=0; u<$num_runs; u++))
+				do
+			    #awk -v per=${percentile[$b]} '$2 ~ "^0.90" {print $1; exit}' gnuplot_results/fct_cdf_load_${mice_load[$m]}_thresh_${fs_threshold[$n]}_${LB_SCHEME[$l]}-fdd-${FailureDetectionDelay[$a]}-run-$u.tr
+				    printf 'Dupack %d DCTCP_K %d FDD %d Load %.2f LB %s run %d \t' ${DupAckThresh[$d]} ${dctcp_K[$c]} ${FailureDetectionDelay[$a]} ${mice_load[$m]} ${LB_SCHEME[$l]} $u >> "${percentile[$b]}_pct_${types[$e]}.txt"
+				    if [ ${percentile[$b]} -eq 90 ]
+				    then
+					awk '$2 ~ "^0.90" {print $1; exit}' gnuplot_results/${types[$e]}_cdf_load_${mice_load[$m]}_thresh_${fs_threshold[$n]}_${LB_SCHEME[$l]}-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$c]}-dupack-${DupAckThresh[$d]}-run-$u.tr >> "${percentile[$b]}_pct_${types[$e]}.txt"
+				    elif [ ${percentile[$b]} -eq 99 ]
+				    then
+					awk '$2 ~ "^0.99" {print $1; exit}' gnuplot_results/${types[$e]}_cdf_load_${mice_load[$m]}_thresh_${fs_threshold[$n]}_${LB_SCHEME[$l]}-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$c]}-dupack-${DupAckThresh[$d]}-run-$u.tr >> "${percentile[$b]}_pct_${types[$e]}.txt"
+				    else
+					awk '$2 ~ "^0.999" {print $1; exit}' gnuplot_results/${types[$e]}_cdf_load_${mice_load[$m]}_thresh_${fs_threshold[$n]}_${LB_SCHEME[$l]}-fdd-${FailureDetectionDelay[$a]}-dctcpK-${dctcp_K[$c]}-dupack-${DupAckThresh[$d]}-run-$u.tr >> "${percentile[$b]}_pct_${types[$e]}.txt"
+				    fi
+				done
+			    done
+			    printf '\n' >> "${percentile[$b]}_pct_${types[$e]}.txt"
+			done
+		    done
+		done
+	    done
+	done
+    done
+done
+
+mkdir -p percentiles
+mv *_pct_*.txt percentiles

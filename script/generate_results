@@ -8,8 +8,8 @@ awk -f awk_all_LB_schemes/percentiles.awk percentiles/99_pct_fct.txt > results/9
 awk -f awk_all_LB_schemes/percentiles.awk percentiles/99_pct_fct_mice.txt > results/99_mice_avg.txt
 awk -f awk_all_LB_schemes/afct_all.awk response_times.log > results/afct_all_avg.txt
 awk -f awk_all_LB_schemes/afct_mice.awk response_times.log > results/afct_mice_avg.txt
-#awk -f awk_all_LB_schemes/afct_medium.awk response_times.log > results/afct_medium_avg.txt
-#awk -f awk_all_LB_schemes/afct_large.awk response_times.log > results/afct_large.txt
+awk -f awk_all_LB_schemes/afct_medium.awk response_times.log > results/afct_medium_avg.txt
+awk -f awk_all_LB_schemes/afct_large.awk response_times.log > results/afct_large.txt
 #awk -f awk_all_LB_schemes/afct_northsouth.awk response_times.log > results/afct_northsouth.txt
 #awk -f awk_all_LB_schemes/afct_GL2GL.awk response_times.log > results/afct_GL2GL.txt
 #awk -f awk_all_LB_schemes/avg_thru_large.awk response_times.log > results/avg_thru_large_avg.txt
