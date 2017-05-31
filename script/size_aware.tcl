@@ -319,8 +319,8 @@ if {$LB_SCHEME == "CONGA"} {
     } else {
 	Classifier/MultiPath set flowcellSpraying_ 1;
     }
-} elseif {$LB_SCHEME == "SPPS-DASO"} {
-    ## SPPS-DASO ~ Delay Asymmetry flows Sprayed Only (that too across all spines, not just healthy spines)
+} elseif {$LB_SCHEME == "SPPS-DAU"} {
+    ## SPPS-DAU ~ Delay Asymmetry flows Sprayed Only (that too across all spines, not just healthy spines)
 
     set RoundRobin 1; # deterministic
     set FlowCell 1;
@@ -339,7 +339,7 @@ if {$LB_SCHEME == "CONGA"} {
     }
 
 } elseif {$LB_SCHEME == "SPPS-DASH"} {
-    ## SPPS-DASO ~ Delay Asymmetry flows Sprayed all spines, or Hashed
+    ## SPPS-DAU ~ Delay Asymmetry flows Sprayed all spines, or Hashed
 
     set RoundRobin 1; # deterministic
     set FlowCell 1;

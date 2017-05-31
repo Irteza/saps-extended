@@ -2,15 +2,15 @@
 
 types=("fct" "fct_mice");
 percentile=(90 99 999) ; # AWK for 90th Percentile FCT: # AWK for 99th Percentile FCT:
-mice_load=(0.2 0.4 0.6 0.8 0.9)
+mice_load=(0.2 0.4 0.6 0.7 0.8 0.9)
 fs_threshold=(10000); ## Web Search ## (1141) 75 685pkts=1MB
 #LB_SCHEME=("RPS" "ECMP" "WFCS" "WPS" "HPO" "SPS" "SPFS"); ## Selective Path Flowcell/Packet Spraying 
-#LB_SCHEME=("RPS" "ECMP" "WPS" "WFCS" "SPPS"); ## Healthy Path-Only Packet Spraying
-LB_SCHEME=("WFCS" "WFCS-P" "SPPS" "SPPS-DASO"); ## Healthy Path-Only Packet Spraying
+LB_SCHEME=("RPS" "ECMP" "WPS" "WFCS" "SPPS" "SPPS-DAU"); ## Healthy Path-Only Packet Spraying
+#LB_SCHEME=("WFCS" "WFCS-P" "SPPS" "SPPS-DASO"); ## Healthy Path-Only Packet Spraying
 FailureDetectionDelay=(1000) ; ## Look for using values like 1, 5, 10, 100, 1000 * RTT // 200
 dctcp_K=(25) ; ## Can modify the DCTCP_K threshold from here (10-May-2016)
 DupAckThresh=(3) ; # Can modify Duplicate ACK threshold from here (10-May-2016)
-num_runs=5
+num_runs=10
 
 echo "Percentile for FCTs"
 
