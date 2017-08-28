@@ -1,0 +1,211 @@
+
+SAPS Latest (Journal Version) DONE-
+
+"FORMAT: 
+01 node 
+02 sess 
+03 startTime 
+04 currTime 
+05 flowDur 
+06 dataPkts 
+07 dataBytes 
+08 rexmitBytes 
+09 throughput 
+10 cwnd_cuts1 
+11 rexmit 
+12 isElephant 
+13 rexmitPkts 
+14 dup_count1 
+15 dup_count2 
+16 fromFailedLeaf 
+17 necn_responses 
+18 selSpraying 
+19 poorPathFlow
+20 flow-End-State (w.r.t. failure phase)
+21 tiny-Mice
+22 toFailedLeaf
+23 NorthSouthFlow
+24 Originally-Hashed
+25 Intra-Rack-Flow
+26 Size
+"
+
+puts $Out 
+"[$self set node] \t 
+[$self set sess] \t 
+[$self set starts] \t\
+[$ns now] \t 
+$duration \t 
+[$self set ndatapack_] \t\
+[$self set ndatabytes_] \t 
+[$self set nrexmitbytes_] \t\
+[expr [$self set ndatabytes_]/$duration] \t\
+[$self set ncwndcuts1_] \t 
+[$self set nrexmit_]\t 
+[$self set isElephant_]\t 
+[$self set nrexmitpack_]\t\
+[$self set dupCase1Count_] \t 
+[$self set dupCase2Count_] \t 
+[$self set fromFailedLeaf_] \t 
+[$self set necnresponses_]\t\
+[$self set selectiveSpraying_]\t 
+[$self set poorPathFlow_]\t 
+$flowEndState \t 
+$tinyMice \t 
+[$self set toFailedLeaf_] \t 
+[$self set northSouthFlow_] \t 
+[$self set originallyHashed_]\t\
+[$self set intraRackFlow_]\t 
+[$self set size]"
+
+################################################################################################################
+
+SAPS Latest (Journal Version) FINISH -
+
+printf 
+"%.2f %s %s %s %s %d %d %d 
+AFCT:(All,Large,Medium,Mice,All-GL2GL,Mice-GL2GL,Mice-Sprayed,Mice-Hashed,NorthSouth) %.5f %.5f %.5f %.5f %.5f %.5f %.5f %.5f %.5f 
+Mice %.5f %.5f %.5f %.5f %.5f 
+Medium %.5f %.5f %.5f %.5f %.5f 
+Large %.5f %.5f %.5f %.5f %.5f 
+Flow-Counts:(All,Large,Medium,Mice,ToAndFomGoodLeaf,fromFailedLeaf,toFailedLeaf,NorthSouth) %d %d %d %d %d %d %d %d 
+Failed-Leaf-Sprayed %d Failed-Leaf-Hashed %d Mice-Sprayed %d Mice-Hashed %d 
+rex-pkts(G2G_L,to_F_L,from_F_L,all): %d %d %d %d 
+cwnd-cuts: %d ecn-responses: %d rex-medium-pkts: %d 
+drops_rexmTO(G2G_L,to_F_L,from_F_L,all): %d %d %d %d 
+Avg-Thruput:Large %.3f 
+(To-And-From-Good-Leaf,From-Failed-Leaf,To-Failed-Leaf) %.3f %.3f %.3f 
+Failed-Leaf-Sprayed %.3f Failed-Leaf-Hashed %.3f LargeFlowsHashed %.3f 
+ShortFlowsHashed %.3f 
+%.3f %.3f %.3f %.3f %.3f 
+NorthSouthThru %.3f 
+Avg-Goodput:(LargeFlows,To-And-From-Good-Leaf,From-Failed-Leaf) %.3f %.3f %.3f 
+AvgThruput-All %.3f %.3f 
+rex-pkts(HashedTillEnd,Remapped,Sprayed): %d %d %d 
+AFCT(intra,inter) %.5f %.5f Counts(intra,inter) %d %d  \n", 
+
+load_, 
+type, 
+cdf, 
+lbs, 
+topo, 
+dctcpK, 
+dupack, 
+fst, 
+"AFCT:(All,Large,Medium,Mice,All-GL2GL,Mice-GL2GL,Mice-Sprayed,Mice-Hashed,NorthSouth)"
+av, 
+av_long, 
+av_medium, 
+afct_mice, 
+afct_toAndFromGoodLeaf, 
+afct_mice_toAndFromGoodLeaf, 
+afct_mice_sprayed, 
+afct_mice_hashed, 
+afct_NorthSouth, 
+"Mice"
+afct_mice_endBeforeFailure, 
+afct_mice_endAfterFailureOccurred, 
+afct_mice_endAfterFailureDetected, 
+afct_mice_endAfterFailureFixed, 
+afct_mice_endAfterRestorationDetected , 
+"Medium"
+afct_medium_endBeforeFailure, 
+afct_medium_endAfterFailureOccurred, 
+afct_medium_endAfterFailureDetected, 
+afct_medium_endAfterFailureFixed, 
+afct_medium_endAfterRestorationDetected,
+"Large"
+afct_long_endBeforeFailure, 
+afct_long_endAfterFailureOccurred, 
+afct_long_endAfterFailureDetected, 
+afct_long_endAfterFailureFixed, 
+afct_long_endAfterRestorationDetected, 
+"Flow-Counts:(All,Large,Medium,Mice,ToAndFomGoodLeaf,fromFailedLeaf,toFailedLeaf,NorthSouth)"
+nl, 
+long_count, 
+medium_count, 
+count_mice, 
+flowsToAndFromGoodLeaf, 
+flowsFromFailedLeaf, 
+flowsToFailedLeaf, 
+countNorthSouth, 
+"Failed-Leaf-Sprayed"
+flowsFromFailedLeafSprayed, 
+"Failed-Leaf-Hashed"
+flowsOnPoorPath, 
+"Mice-Sprayed"
+flowsMiceSprayed, 
+"Mice-Hashed"
+flowsMiceHashed,
+"rex-pkts(G2G_L,to_F_L,from_F_L,all):" 
+rexmit_pk_toAndFromGoodLeaf, 
+rexmit_pk_toFailedLeaf, 
+rexmit_pk_fromFailedLeaf, 
+sum_rexmit_pk, 
+"cwnd-cuts:"
+sum_cwnd_cuts1, 
+"ecn-responses:"
+sum_ecn_responses, 
+"rex-medium-pkts:"
+sum_rexmit_pk_medium, 
+"drops_rexmTO(G2G_L,to_F_L,from_F_L,all):"
+drops_toAndFromGoodLeaf, 
+drops_toFailedLeaf, 
+drops_fromFailedLeaf, 
+drops, 
+"Avg-Thruput:Large"
+av_thruput_long , 
+"(To-And-From-Good-Leaf,From-Failed-Leaf,To-Failed-Leaf)"
+avg_thru_ToAndFromGoodLeaf, 
+avg_thru_fromFailedLeaf, 
+avg_thru_toFailedLeaf, 
+"Failed-Leaf-Sprayed"
+avg_thru_flowsFromFailedLeafSprayed, 
+"Failed-Leaf-Hashed" 
+avg_thru_flowsOnPoorPath,
+"LargeFlowsHashed" 
+avg_thru_long_onPoorPath,
+"ShortFlowsHashed" 
+avg_thru_mice_onPoorPath, 
+avg_thru_long_endBeforeFailure, 
+avg_thru_long_endAfterFailureOccurred, 
+avg_thru_long_endAfterFailureDetected, 
+avg_thru_long_endAfterFailureFixed, 
+avg_thru_long_endAfterRestorationDetected, 
+"NorthSouthThru"
+avgThruNorthSouth, 
+"Avg-Goodput:(LargeFlows,To-And-From-Good-Leaf,From-Failed-Leaf)"
+av_goodput_long, 
+av_goodput_ToAndFromGoodLeaf, 
+av_goodput_fromFailedLeaf, 
+"AvgThruput-All"
+avg_thruput_all, 
+avgThruputAll, 
+"rex-pkts(HashedTillEnd,Remapped,Sprayed):"
+rexmit_pk_GL2GL_hash_end, 
+rexmit_pk_GL2GL_remapped, 
+rexmit_pk_GL2GL_sprayed, 
+"AFCT(intra,inter)" 
+afct_IntraRackFlows, 
+afct_InterRackFlows, 
+"Counts(intra,inter)"
+countIntraRackFlows, 
+countInterRackFlows
+
+################################################################################################################
+
+FINISH-
+
+		printf "%.2f %s %s %s %s %d %d %d AFCT: All %.5f Mice %.5f Mice-Sprayed %.5f Mice-Hashed %.5f TinyMice %.5f %.5f %.5f %.5f %.5f Mice %.5f %.5f %.5f %.5f %.5f Longs %.5f %.5f %.5f %.5f %.5f Flow Counts: All %d Long %d ToAndFomGoodLeaf %d fromFailedLeaf %d toFailedLeaf %d Failed-Leaf-Sprayed %d Failed-Leaf-Hashed %d Mice-Sprayed %d Mice-Hashed %d rex-pkts: %d cwnd-cuts: %d ecn-responses: %d rex-mice-pkts: %d rexmTO: %d Avg Thruput: LongFlows %.3f To-And-From-Good-Leaf %.3f From-Failed-Leaf %.3f To-Failed-Leaf %.3f Failed-Leaf-Sprayed %.3f Failed-Leaf-Hashed %.3f LongFlowsHashed %.3f ShortFlowsHashed %.3f %.3f %.3f %.3f %.3f %.3f  Avg Goodput: LongFlows %.3f To-And-From-Good-Leaf %.3f From-Failed-Leaf %.3f  dupCounts %d %d \n", load, type, cdf, lbs, topo, dctcpK, dupack, fst, av, av_short, afct_short_sprayed, afct_short_hashed, afct_tinyMice_endBeforeFailure, afct_tinyMice_endAfterFailureOccurred, afct_tinyMice_endAfterFailureDetected, afct_tinyMice_endAfterFailureFixed, afct_tinyMice_endAfterRestorationDetected , afct_mice_endBeforeFailure, afct_mice_endAfterFailureOccurred, afct_mice_endAfterFailureDetected, afct_mice_endAfterFailureFixed, afct_mice_endAfterRestorationDetected,afct_long_endBeforeFailure, afct_long_endAfterFailureOccurred, afct_long_endAfterFailureDetected, afct_long_endAfterFailureFixed, afct_long_endAfterRestorationDetected, nl, long_count, flowsToAndFromGoodLeaf, flowsFromFailedLeaf, flowsToFailedLeaf, flowsFromFailedLeafSprayed, flowsOnPoorPath, flowsShortSprayed, flowsShortHashed, sum_rexmit_pk, sum_cwnd_cuts1, sum_ecn_responses, sum_rexmit_pk_mice, drops, av_thruput_long , avg_thru_ToAndFromGoodLeaf, avg_thru_fromFailedLeaf, avg_thru_toFailedLeaf, avg_thru_flowsFromFailedLeafSprayed, avg_thru_flowsOnPoorPath, avg_thru_long_onPoorPath, avg_thru_short_onPoorPath, avg_thru_long_endBeforeFailure, avg_thru_long_endAfterFailureOccurred, avg_thru_long_endAfterFailureDetected, avg_thru_long_endAfterFailureFixed, avg_thru_long_endAfterRestorationDetected, av_goodput_long, av_goodput_ToAndFromGoodLeaf, av_goodput_fromFailedLeaf, dupCount1, dupCount2 >> fil;
+
+
+
+################################################################################################################
+Old:
+
+DONE:
+puts "FORMAT: node sess startTime currTime flowDur dataPkts dataBytes rexmitBytes throughput cwnd_cuts1 rexmit isElephant rexmitPkts dup_count1 dup_count2 fromFailedLeaf necn_responses selSpraying poorPathFlow"
+
+FINISH:
+printf "%.2f %s %s %s %s %d AFCT: All %.5f Mice %.5f Flows: All %d Long %d rex-pkts: %d cwnd-cuts: %d ecn-responses: %d rex-mice-pkts: %d rexmTO: %d Avg Thruput: LongFlows %.3f From-Good-Leaf %.3f From-Failed-Leaf %.3f Failed-Leaf-Sprayed %.3f Failed-Leaf-Hashed %.3f FlowCount: fromGoodLeaf %d fromFailedLeaf %d Failed-Leaf-Sprayed %d Failed-Leaf-Hashed %d dupCounts %d %d \n", load, type, cdf, lbs, topo, fst, av, av_short, nl, long_count, sum_rexmit_pk, sum_cwnd_cuts1, sum_ecn_responses, sum_rexmit_pk_mice, drops, av_thruput_long , avg_thru_fromGoodLeaf, avg_thru_fromFailedLeaf, avg_thru_flowsFromFailedLeafSprayed, avg_thru_flowsOnPoorPath, flowsFromGoodLeaf, flowsFromFailedLeaf, sum_thru_flowsFromFailedLeafSprayed, sum_thru_flowsOnPoorPath, dupCount1, dupCount2 >> fil;
+
