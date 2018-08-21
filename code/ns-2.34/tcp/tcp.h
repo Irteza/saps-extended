@@ -38,9 +38,16 @@
 #include "agent.h"
 #include "packet.h"
 
-//#define debug_tcp_smi 1
+//#include <list>
+#include <cstring>
 
 //class EventTrace;
+
+struct failedLink {
+	int leaf; // leaf index of failed link
+	int spine; // spine index of failed link
+	int failureRatio; // 100 indicates full failure
+};
 
 struct hdr_tcp {
 #define NSA 3
@@ -131,8 +138,17 @@ struct hdr_tcp {
 #define TCP_TIMER_DELACK	3
 #define TCP_TIMER_Q         4
 #define TCP_TIMER_RESET        5 
+#define TCP_FB_TIMER 6
 
 class TcpAgent;
+
+class FlowBenderTimer : public TimerHandler {
+public:
+	FlowBenderTimer(TcpAgent *a) : TimerHandler() { a_ = a; }
+protected:
+	virtual void expire(Event *e);
+	TcpAgent *a_;
+};
 
 class RtxTimer : public TimerHandler {
 public: 
@@ -192,6 +208,8 @@ public:
 
 	void trace(TracedVar* v);
 	virtual void advanceby(int delta);
+	virtual void nextValidLink(); // 21 June 2017 :: SMI. Lets us get the next valid link within the SVT this flow is mapped to
+	virtual int isSpineFailed(int spine); // for Deterministic Weighted Schemes WFCS and WPS 
 
 protected:
 	virtual int window();
@@ -325,6 +343,7 @@ protected:
 	void spurious_timeout();
 
 	/* Timers */
+	FlowBenderTimer fl_bndr_timer; /* FlowBender timer, that checks if marked ACK packets over all ACK packets exceed a certain threshold T -- 6-Jul-2017 */
 	RtxTimer rtx_timer_;
 	DelSndTimer delsnd_timer_;
 	BurstSndTimer burstsnd_timer_;
@@ -332,6 +351,8 @@ protected:
 		rtx_timer_.force_cancel();
 		burstsnd_timer_.force_cancel();
 		delsnd_timer_.force_cancel();
+		rtx_timer_.force_cancel();
+		fl_bndr_timer.force_cancel(); // added SMI 19-Jul
 	}
 	virtual void cancel_rtx_timer() {
 		rtx_timer_.force_cancel();
@@ -362,7 +383,7 @@ protected:
 	/* End of R-RTO */
 
 	/* Parameters for backwards compatility with old code. */ 
-	int bug_fix_;		/* 1 for multiple-fast-retransmit fix */
+	int bug_fix_;		/* 1 for multiple-aifast-retransmit fix */
 	int less_careful_;	/* 1 for Less Careful variant of bug_fix_, */
 				/*  for illustration only  */
 	int exitFastRetrans_;	/* True to clean exits of Fast Retransmit */ 
@@ -451,9 +472,7 @@ protected:
 	int *uplinkWeights;	// SMI 14-Dec-15
 	int totalUplinkWeights; // SMI 15-Dec-15 - sum of all weights
 	int failureRatio_;	// SMI 23-Dec-15
-	int failedLinkIndex_;	// SMI 23-Dec-15
-	int *failedLinkSpines; // 20-Feb-17
-	int *failedLinkLeafs; // 24-Feb-17
+	//int failedLinkIndex_;	// SMI 23-Dec-15
 	int failureAware_;	// Informs if it is FCS-(Failure Aware or Unaware)
 	int fromFailedLeaf_; // Tells if this flow originates from leaf that has a failure ... SMI 4-Jan-16
 	int toFailedLeaf_; // Is the flow destined for the failed leaf .. SMI 13-Mar-16
@@ -463,10 +482,52 @@ protected:
 	int healthyPathOnly_; // 14 July 2016
 	int DA_sprayOnly_; // 15 Jul 2016 .. make sure delay asymmetry flows (G2GL) are only sprayed, and that too across all spines
 
+	//int *failedLinkSpines; // 20-Feb-17
+	//int *failedLinkLeafs; // 24-Feb-17
+
+	// Added on 12-June-2017
+	// std::list<int> svt_NoFailure;
+	// std::list<int> svt_partialFailure;
+	// std::list<int> fullyFailedLinks;
+	int* svt_NoFailure;
+	int* svt_partialFailure;
+	int* fullFailureSpines;
+
+	int* svt_DA_partialFailure; // spines involved in an indirect partial failure
+	int* svt_DA_fullFailure; // spines involved in an indirect full failure
+	int* svt_DA_NoFailure; // spines that face no direct failure and not related to any indirect failure either
+	int svtMapping; // indicates which SVT this flow is mapped to from (svt_NoFailure, svt_partialFailure, svt_DA_NoFailure, svt_DA_partialFailure, svt_DA_fullFailure)
+	int healthyLinkCapacity; // stores the bandwidth of the normal healthy link in Gbps
+	int flowsizeBytes; // size of flow in bytes
+
+	char* allFailedLinks;
+	failedLink* failedLinks; // list of all the failed links, with their leaf,spine,failureRatio (type)
+
+	int numDirectPartialFailurePaths;
+	int numDirectFullFailurePaths;
+	int numIndirectPartialFailurePaths;
+	int numIndirectFullFailurePaths;
+
+	// 18-Feb-17 :: to manage the possibility of multiple failures...
+	//int multipleFailure_;
+	int numFailures_; // 20-Feb
+	int numDirectFailures_; // 06-Mar-17
+	// int secondFailedLinkLeaf_;
+	// int secondFailedLinkSpine_;
+	//int flowFacingMultipleFailures_;
+	int DA_Flow_; // added on 27-Mar-17
+	int toggleWeakSpines_; // will use to toggle between failed spines -- no binding needed.. 25-feb-17
+
 	int srcLeaf_; // 24-Feb-17
 	int destLeaf_; // 24-Feb-17
 
 	int flowBender_; // 13-Jan-17
+	double flowBender_T; // threshold for FlowBender, for marked ACK packets per RTT -- 3-July-2017
+	int flowBender_N; // num of consecutive RTTs wherein F exceeds T, for which rerouting is then required
+	int markedAckPkts_F; // number of marked ACK packets within an RTT -- 3-Jul-17
+	int totalAckPkts; // total number of ACK packets received within an RTT -- 3-Jul-17 
+	int toggleTTL_; // toggle value of TTL when rerouting -- 5-Jul-17
+	int numRTTsCongested_; // number of RTTs in which congestion has been measured consecutively, where F exceeds T -- 5-Jul-17
 
 	int dynamicMapping_; //  Indicates if this is Selective Spraying (SPS) with Dynamic Mapping to PoorPath or not ... 16-June
 	int dynamicMappingThreshold_; // Indicates the threshold (in bytes) after which a Poor-Path flow will necessarily be re-mapped to spraying ... 16-June
@@ -476,17 +537,8 @@ protected:
 	int failureCase_; // 0=no failure, 1=partial, 2=full failure. 8-Mar-16
 	int failureDetected_; // flag is on when failure is noticed. 8-Mar-16
 
-	int failedLinkLeaf_; // 25-feb-17 added to store index of first failed leaf
+	//int failedLinkLeaf_; // 25-feb-17 added to store index of first failed leaf
 
-	// 18-Feb-17 :: to manage the possibility of multiple failures...
-	int multipleFailure_;
-	int numFailures_; // 20-Feb
-	int numDirectFailures_; // 06-Mar-17
-	int secondFailedLinkLeaf_;
-	int secondFailedLinkSpine_;
-	//int flowFacingMultipleFailures_;
-	int DA_Flow_; // added on 27-Mar-17
-	int toggleWeakSpines_; // will use to toggle between failed spines -- no binding needed.. 25-feb-17
 
 	int northSouthFlow_; // indicates whether this is a North South flow
 	int intraRackFlow_; // indicates whether this is an intra-rack flow .. 22-Jul

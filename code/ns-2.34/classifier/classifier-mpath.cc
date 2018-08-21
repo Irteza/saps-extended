@@ -55,12 +55,12 @@ static const char rcsid[] =
 #include "tcp.h"
 #include "packet.h"
 
-//#define debug_mpath_smi 1
+#define debug_mpath_smi 0
 
 
 class MultiPathForwarder : public Classifier {
 public:
- 	MultiPathForwarder() : ns_(0), nodeid_(0), nodetype_(0), perflow_(0), packetSpraying_(0), flowcellSpraying_(0), selectiveSpraying_(0), K_(0), failureCase_(0) { // checkpathid_(0)
+ 	MultiPathForwarder() : ns_(0), nodeid_(0), nodetype_(0), perflow_(0), packetSpraying_(0), flowcellSpraying_(0), selectiveSpraying_(0), K_(0), failureCase_(0), coresPerAgg(0) { // checkpathid_(0)
 		bind("nodeid_", &nodeid_); 
 		bind("nodetype_", &nodetype_);
 		bind("perflow_", &perflow_);
@@ -70,6 +70,7 @@ public:
 		bind("selectiveSpraying_", &selectiveSpraying_); // SMI 8-Mar-16
 		bind("K_", &K_); // SMI 8-May
 		bind("failureCase_", &failureCase_); // SMI 30-jul-16
+		bind("coresPerAgg", &coresPerAgg); // SMI 25-Jul-17
 	}
 
 	/* Now have to do 
@@ -89,39 +90,47 @@ public:
 
 		if(packetSpraying_) { // do PS
 			//printf("DEBUG: nodeid=%d seqno=%d linkID=%d ndatapack_=%d\n",nodeid_,tcph->seqno_,tcph->linkID,tcph->pkts_sent_so_far_);	
-#ifdef debug_mpath_smi
-			if(nodeid_==0) {
-				printf("PktType=%s fh->failureDetected=%d at = %f \t", packet_info.name(ch->ptype()) , fh->failureDetected(),  (float) Scheduler::instance().clock());
+			if(debug_mpath_smi) {
+				if(nodeid_==0) {
+					printf("PktType=%s fh->failureDetected=%d at = %f \t", packet_info.name(ch->ptype()) , fh->failureDetected(),  (float) Scheduler::instance().clock());
+				}
 			}
-#endif
+
 
 			if(selectiveSpraying_ && fh->failureDetected()) {
-#ifdef debug_mpath_smi
-				if(nodeid_==0) {
-					printf("SelectiveSpraying==TRUE && Failure is Detected: linkID=%d !!\n ", tcph->linkID);
+				if(debug_mpath_smi) {
+					if(nodeid_==0) {
+						printf("SelectiveSpraying==TRUE && Failure is Detected: linkID=%d !!\n ", tcph->linkID);
+					}
 				}
-#endif
-				//int fail = tcph->linkID - 1;
-				//if(fail < 0) fail += (maxslot_ + 1);
+
+				int fail = tcph->linkID - 1;
+				if(fail < 0) fail += (maxslot_ + 1);
+
 				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
 				cl = ns_;
 
-				//while(slot_[cl]==0 && ns_ !=fail) {
-				//cl = ns_++;
-				//ns_ %= (maxslot_ + 1);
-				//}
+				//printf("Selective Spraying: PktType=%s SeqNo=%d linkID=%d \n", packet_info.name(ch->ptype()) , tcph->seqno(), tcph->linkID);
+
+				while(slot_[cl]==0 && ns_ !=fail) {
+					cl = ns_++;
+					ns_ %= (maxslot_ + 1);
+				}
 
 			} else {
+
+				//printf("Selective Spraying: PktType=%s SeqNo=%d linkID=%d \n", packet_info.name(ch->ptype()) , tcph->seqno(), tcph->linkID);
+
 				int fail = ns_;
 				do {
 					cl = ns_++;
 					ns_ %= (maxslot_ + 1);
 				} while (slot_[cl] == 0 && ns_ != fail);
-#ifdef debug_mpath_smi
-				if(nodeid_==0) {
-					printf("Normal RPS Code running at Node %d: Slot Chosen=%d !!\n ", nodeid_, cl);
+				if(debug_mpath_smi) {
+					if(nodeid_==0) {
+						printf("Normal RPS Code running at Node %d: Slot Chosen=%d !!\n ", nodeid_, cl);
+					}
 				}
-#endif
 			}
 		} else if(flowcellSpraying_) {
 			// WFCS, WFCS-P, UFCS, WPS 
@@ -138,12 +147,15 @@ public:
 			} else {
 				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
 				cl = ns_;
+				while(slot_[cl] == 0) {
+					cl = (cl+1) % (maxslot_ + 1);
+				} // to prevent mapping to fully failed link
 			}
 
-#ifdef debug_mpath_smi
-			printf("Flowcell Spraying LB: tcph->linkID=%d, cl=%d, SeqNo=%d, FlowcellNum=%d, ", tcph->linkID, cl, tcph->seqno(), fh->flowcellSeq());
-			printf("FlowID=%d \n", h->flowid());
-#endif
+			if(debug_mpath_smi) {
+				printf("Flowcell Spraying LB: tcph->linkID=%d, cl=%d, SeqNo=%d, FlowcellNum=%d, ", tcph->linkID, cl, tcph->seqno(), fh->flowcellSeq());
+				printf("FlowID=%d \n", h->flowid());
+			}
 			/*if (nodeid_ == 0){
 				ns_ = tcph->linkID; // ns_ = tcph->linkID % (maxslot_ + 1);
 				cl = ns_;
@@ -158,9 +170,9 @@ public:
 			}*/			
 
 		} else if(perflow_ || (packetSpraying_==0 && fh->isElephant()==0)) { // || checkpathid_
-#ifdef debug_mpath_smi
+			if(debug_mpath_smi) {
 				printf("Normal ECMP Code running !!\n ");
-#endif
+			}
 
 			// do ECMP
 			struct hkey {
@@ -177,19 +189,19 @@ public:
 			buf_.sport = h->sport();
 			buf_.dport = h->dport();
 			buf_.fid = h->flowid();
-			buf_.ttl = h->ttl();				//OAJ: Added on 2015-07-03
-
+			// FlowBender includes the TTL value, which is modified when F exceeds T or an RTO occurs
+			if(perflow_ == 2 && ch->ptype()==PT_TCP) {
+				buf_.ttl = h->ttl();				//OAJ: Added on 2015-07-03
+			}
 			char* bufString = (char*) &buf_;
 			int length = sizeof(hkey);
 
 			unsigned int ms_ = (unsigned int) HashString(bufString, length); // commented 8-May
 			//int ms_ = (int) HashString(bufString, length);
 
-
 			//// if (checkpathid_) { }
-			if(K_ == 0) { // this is the case of leaf-spine
-				ms_ %= (maxslot_ + 1);
-			} else { // this is the case of fat-tree
+			/* Old Size Aware Packet Spraying */
+			if(perflow_==0 && K_!=0) {
 				if(fh->visitedToR() == 1) { // at the Agg Switch
 					ms_ = fh->aggDecision();
 					fh->visitedToR_ = 0;
@@ -204,20 +216,40 @@ public:
 					ms_ %= (maxslot_ + 1);
 					fh->visitedToR_ = 1;
 				}
-			}
-			
-			int fail = ms_;
-			do {
-				cl = ms_++;
+			} else {
 				ms_ %= (maxslot_ + 1);
-			} while (slot_[cl] == 0 && ms_ != fail);
+				// if(perflow_==2 && K_!=0) {
+				// 	int possiblePaths_ = K_/2 * coresPerAgg;
+				// 	ms_ = ms_ % possiblePaths_;
+				// 	if(fh->visitedToR() == 1) { // at the Agg Switch
+				// 		ms_ = ms_ % coresPerAgg; // map towards a specific core switch from agg
+				// 		fh->visitedToR_ = 0; // reset needed
+				// 	} else { // at ToR switch
+				// 		ms_ = ms_ / coresPerAgg;
+				// 		fh->visitedToR_ = 1;
+				// 	}
+				// 	ms_ %= (maxslot_ + 1); // extra precaution step
+				// } else {
+				// 	ms_ %= (maxslot_ + 1);
+				// }
+			}
 
-		//} else if(packetSpraying_ || fh->isElephant()) {
+			if(debug_mpath_smi) {
+				if(perflow_ == 2 && ch->ptype()==PT_TCP) {
+					printf("At Switch: FlowBender:: Value of TTL %d PktType=%s  \t", buf_.ttl, packet_info.name(ch->ptype()));
+				}
+				printf("Value of ms_=%d SeqNo=%d failure-detected=%d Pkt-Type=%s \n", ms_, tcph->seqno(), fh->failureDetected(), packet_info.name(ch->ptype()));
+			}
+			cl = ms_;
+
+			while(slot_[cl] == 0) {
+				cl = (cl+1) % (maxslot_ + 1);
+			} // to prevent mapping to fully failed link
 		} else {
 			// Does such a case exist, not ECMP, not PS, then what ??
-#ifdef debug_mpath_smi
-			printf("No valid LB: PS=%d, ECMP=%d, isElephant=%d", packetSpraying_, perflow_, fh->isElephant());
-#endif
+			if(debug_mpath_smi) {
+				printf("No valid LB: PS=%d, ECMP=%d, isElephant=%d", packetSpraying_, perflow_, fh->isElephant());
+			}
 		}
 
 		return cl;
@@ -234,6 +266,7 @@ private:
 	int flowcellSpraying_;
 	int selectiveSpraying_; // 8-Mar-16
 	int K_; // if this is zero, we will assume it's not fat-tree topology
+	int coresPerAgg; // 25-Jul-17 -- needed for FlowBender implementation on fat-tree
 	int failureCase_; // 31 Jul 16 (SMI), used for full failure case specifically
 	
 	static unsigned int HashString(register const char *bytes,int length) {

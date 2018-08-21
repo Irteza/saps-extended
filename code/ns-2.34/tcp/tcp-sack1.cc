@@ -71,6 +71,7 @@ class Sack1TcpAgent : public TcpAgent {
 	ScoreBoard* scb_;
 	static const int SBSIZE=64; /* Initial scoreboard size */
 	void update_dctcp_alpha(Packet *); /* DCTCP alpha update */
+	void checkCongestionFB(); // FlowBender -- check the congestion level of the used path after each RTT
 };
 
 static class Sack1TcpClass : public TclClass {
@@ -127,16 +128,25 @@ void Sack1TcpAgent::recv(Packet *pkt, Handler*)
                 return;
         }
 	++nackpack_;
+
+	dupCase1Count_ = hdr_flags::access(pkt)->dupCase1Count(); /* SMI: 15-June-2015 */
+	dupCase2Count_ = hdr_flags::access(pkt)->dupCase2Count(); /* SMI: 15-June-2015 */
+
+	/* FlowBender Stats Update Code -- SMI 6-Jul-2017 */
+	// if(flowBender_) {
+	// 	printf("Servicing ACK pkt: totalAckPkts=%d nackpack_=%d \n", totalAckPkts, (int) nackpack_);
+	// 	totalAckPkts++;
+	// }
 	
 	/* ali munir */
 	if (dctcp_) 
 		update_dctcp_alpha(pkt);
 
-
-
 	int ecnecho = hdr_flags::access(pkt)->ecnecho();
-	if (ecnecho && ecn_)
+	if (ecnecho && ecn_) {
 		ecn(tcph->seqno());
+		//if(flowBender_) markedAckPkts_F++; // added by SMI 6-Jul-17 for FlowBender
+	}
         if (tcph->seqno() >= last_ack_)
 		// Check if ACK is valid.  Suggestion by Mark Allman.
 		valid_ack = 1;
@@ -472,6 +482,15 @@ void Sack1TcpAgent::timeout(int tno)
 
 		/* end: ali munir */
 
+		/* FlowBender reroutes when RTO occurs, assuming it may be due to a failure */
+		if(flowBender_) {
+			++defttl_; //do rerouting
+			numRTTsCongested_ = 0; // SMI-Commented-jul25
+			totalAckPkts = 0; // SMI-Commented-jul25
+			markedAckPkts_F = 0; // SMI-Commented-jul25
+			fl_bndr_timer.resched(rtt_timeout()); // * tcp_tick_ // SMI-Commented-jul25
+		}
+
 		dupacks_ = 0;
 		fastrecov_ = FALSE;
 		timeout_ = TRUE;
@@ -483,15 +502,57 @@ void Sack1TcpAgent::timeout(int tno)
 #endif
 		recover_ = maxseq_;
 		scb_->ClearScoreBoard();
+	} else {
+		if(tno == TCP_FB_TIMER) {
+			/* FlowBender Timer */ 
+			if(debug_dctcp) {
+				printf("Calling checkCongestionFB()! \n");
+			}
+			checkCongestionFB(); // SMI-Commented-jul25
+		}
 	}
 	TcpAgent::timeout(tno);
-
 
 	// Overrule frto_ setting that may have been done in TcpAgent
 	if (no_frto)
 		frto_ = 0;
 }
 
+/**
+   This function is called after every RTT for FlowBender. Check to see if for N consecutive RTTs, the fraction F of marked packets exceeds threshold T
+   If so, reroute the flow to a new path. If not, do nothing. Reset all relevant variables, and reschedule the timer.
+ **/
+void Sack1TcpAgent::checkCongestionFB() {
+	double now = Scheduler::instance().clock();
+	if(debug_dctcp) {
+		printf("checkCongestionFB -> Time now: %f markedAckPkts_F=%d totalAckPkts=%d flowBender_T=%f \n", now, markedAckPkts_F, totalAckPkts, flowBender_T);
+	}
+
+	double fractionMarked = 0.0;
+	if(totalAckPkts > 0) {
+		fractionMarked = ((double) markedAckPkts_F) /totalAckPkts;
+	}
+
+	if((totalAckPkts > 0) && (fractionMarked > flowBender_T)) {
+		if(++numRTTsCongested_ >= flowBender_N) {
+			//defttl_ = defttl_ + Random::integer(3) + 1;
+			 defttl_ = defttl_ + 1; 	//toggleTTL_++; //do rerouting....!
+			if(debug_dctcp) {
+				printf("checkCongestionFB -> Rerouting Time now: %f markedAckPkts_F=%d totalAckPkts=%d defttl_=%d numRTTsCongested_=%d ", now, markedAckPkts_F, totalAckPkts, defttl_, numRTTsCongested_);
+				printf("ndatapack_=%d \n", (int) ndatapack_);
+			}
+			numRTTsCongested_ = 0;
+		}
+	} else {
+		numRTTsCongested_ = 0;
+	}
+	// reset variables...
+	totalAckPkts = 0;
+	markedAckPkts_F = 0;
+
+	// reschedule the FB timer
+	fl_bndr_timer.resched(rtt_timeout()); // * tcp_tick_ // SMI-Commented-jul25
+}
 
 /*
  * Update dctcp alpha based on the ecn bit in the received packet.
@@ -511,9 +572,17 @@ void Sack1TcpAgent::update_dctcp_alpha(Packet *pkt)
 	if (acked_bytes <= 0) 
 //		acked_bytes = size_;	/* it should be one */
 		acked_bytes = 1;	/* it should be one */
+
 	dctcp_total += acked_bytes;
+	totalAckPkts += acked_bytes; // added SMI 19-jul // SMI-Commented-jul25
+
+	if(debug_dctcp) {
+		printf("dctcp total is = %d ; ECN bit is: %d \n", dctcp_total, ecnbit);
+	}
+
 	if (ecnbit) {
 		dctcp_marked += acked_bytes;
+		markedAckPkts_F += acked_bytes; // added SMI 19-jul // SMI-Commented-jul25
 		//printf("FID: %i marked\n",fid_);
 	}
 
@@ -522,19 +591,81 @@ void Sack1TcpAgent::update_dctcp_alpha(Packet *pkt)
 	/* Check for barrier indicating its time to recalculate alpha.
 	 * This code basically updated alpha roughly once per RTT.
 	 */
+
+	// if(flowBender_) {
+	// 	checkCongestionFB(); // commented-jul26
+	// }
+
 	if (seqno > dctcp_alpha_update_seq) {
+		if(debug_dctcp) {
+			printf("seqno is greater than dctcp_alpha_update_seq!!!  \n");
+		}
 		double temp_alpha;
 		dctcp_alpha_update_seq = dctcp_maxseq;
-		if (dctcp_total > 0) 
+		//cout << "Entered the main if condition." << endl;
+		if (dctcp_total > 0) {			
 			temp_alpha = ((double) dctcp_marked) / dctcp_total;
-		else 
+			
+			if(debug_dctcp) {
+				printf("Dctcp marked is = %d \t", dctcp_marked);
+				//printf("temp_alpha = %f \n", temp_alpha);
+			}
+		}
+		else {
 			temp_alpha = 0.0;
+		}
+
+		// commented-jul27
+		// if(dctcp_total > 0 && flowBender_) {
+		// 	if (temp_alpha > flowBender_T) {
+		// 		if(++numRTTsCongested_ >= flowBender_N) {
+		// 			++defttl_; //do rerouting....!
+		// 			if(debug_dctcp) {
+		// 				printf("Rerouting Time now: markedAckBytes_F=%d totalBytes=%d defTTL_=%d numRTTsCongested_=%d ", dctcp_marked, dctcp_total, defttl_, numRTTsCongested_);
+		// 				printf("ndatapack_=%d \n", (int) ndatapack_);
+		// 			}
+		// 			numRTTsCongested_ = 0;
+		// 		}
+		// 	} else {
+		// 		numRTTsCongested_ = 0;
+		// 	}
+		// }
+	
+		// if(flowBender_) {	
+		// 	if(debug_dctcp) {
+		// 		printf("The ttl value is: %d ; temp_alpha=%f; flowBender_T=%f; flowBender_N=%d; numRTTsCongested_=%d \n", defttl_, temp_alpha, flowBender_T, flowBender_N, numRTTsCongested_);
+		// 	}
+		// 	if (temp_alpha > flowBender_T) {
+		// 		//if (temp_alpha > 0.05) {
+		// 		if(debug_dctcp) {
+		// 			printf("temp_alpha greater than flowBender_T!\n");
+		// 		}
+		// 		numRTTsCongested_++;
+		// 		if(numRTTsCongested_ >= flowBender_N) {
+		// 			defttl_ = defttl_ + 1;	//toggleTTL_++; //do rerouting....!
+		// 			if(debug_dctcp) {
+		// 				printf("Rerouting Time now: markedAckBytes_F=%d totalBytes=%d defTTL_=%d numRTTsCongested_=%d ", dctcp_marked, dctcp_total, defttl_, numRTTsCongested_);
+		// 				printf("ndatapack_=%d \n", (int) ndatapack_);
+		// 			}
+		// 			numRTTsCongested_ = 0;
+		// 		}
+		// 	} else {
+		// 		numRTTsCongested_ = 0;
+		// 	}
+		// 	//if(temp_alpha>0.8) { defttl_ = defttl_+1; }
+		// }
+	
 		
 //		temp_alpha = ((double) dctcp_marked) / 35.0;
 		dctcp_alpha_ = (1 - dctcp_g_) * dctcp_alpha_ + dctcp_g_ * temp_alpha;
 		dctcp_marked = 0;
 		dctcp_total = 0;
+	} else {
+		if(debug_dctcp) {
+			printf("seqno smaller: seqno=%d dctcp_alpha_update=%f \n!!",seqno , (double) dctcp_alpha_update_seq);
+		}
 	}
+
 
 	if(debug_dctcp)
 		fprintf(stdout,"DCTCP update_alpha: (dctcpseq=%d), (marked=%d), (total=%d), (alpha=%f) at time= %f\n", dctcp_maxseq, dctcp_marked, dctcp_total, (double)dctcp_alpha_, (double)Scheduler::instance().clock());

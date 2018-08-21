@@ -49,6 +49,8 @@ static const char rcsid[] =
 
 #define debug_dctcp 0
 
+#define debug_tcp_smi 0
+
 int hdr_tcp::offset_;
 
 static class TCPHeaderClass : public PacketHeaderClass {
@@ -80,10 +82,12 @@ TcpAgent::TcpAgent()
           use_rtt_(0), qs_requested_(0), qs_approved_(0),
 	  qs_window_(0), qs_cwnd_(0), frto_(0), dctcp_maxseq(0), linkID_(0), rfactor(30), 
 	  flowcell_(0), flowcellSizePkts_(43), roundRobin_(0), numUplinks(1), totalUplinkWeights(0),
-	  failureRatio_(1), failedLinkLeaf_(0), failedLinkIndex_(0), failureAware_(0), selectiveSpraying_(0), healthyPathOnly_(0), DA_sprayOnly_(0), poorPathFlow_(0), originallyHashed_(0), 
+	  failureRatio_(1), failureAware_(0), selectiveSpraying_(0), healthyPathOnly_(0), DA_sprayOnly_(0), poorPathFlow_(0), originallyHashed_(0), 
 	  realisticFailure_(0), failureCase_(0), failureDetected_(0), failureStartTime_(0.0), failureDuration_(0.0), failureDetectionDelay_(0.0),
 	  fromFailedLeaf_(0), toFailedLeaf_(0), northSouthFlow_(0), intraRackFlow_(0), dynamicMapping_(0), dynamicMappingThreshold_(0), dynamicMappingThresholdGL2GL_(0), flowBender_(0),
-	  multipleFailure_(0), numFailures_(0), secondFailedLinkLeaf_(0), secondFailedLinkSpine_(0), DA_Flow_(0), srcLeaf_(0), destLeaf_(0), toggleWeakSpines_(0), numDirectFailures_(0)
+	  numFailures_(0), DA_Flow_(0), srcLeaf_(0), destLeaf_(0), toggleWeakSpines_(0), 
+	  numDirectPartialFailurePaths(0), numDirectFullFailurePaths(0), numIndirectPartialFailurePaths(0), numIndirectFullFailurePaths(0), numDirectFailures_(0),
+	  svtMapping(0), healthyLinkCapacity(0), flowsizeBytes(0), flowBender_T(0.0), flowBender_N(1), markedAckPkts_F(0), totalAckPkts(0), numRTTsCongested_(0), toggleTTL_(0), fl_bndr_timer(this)
 {
 #ifdef TCP_DELAY_BIND_ALL
         // defined since Dec 1999.
@@ -119,7 +123,7 @@ TcpAgent::TcpAgent()
 	bind("flowcellSizePkts_", &flowcellSizePkts_); // SMI: 12-Dec-2015 
 	bind("roundRobin_", &roundRobin_); // SMI : 14-Dec-15
 	bind("failureRatio_", &failureRatio_); // SMI 23-Dec-15
-	bind("failedLinkIndex_", &failedLinkIndex_); // SMI 23-Dec-15
+	//bind("failedLinkIndex_", &failedLinkIndex_); // SMI 23-Dec-15
 	bind("failureAware_", &failureAware_); // SMI 23-Dec-15
 	bind("fromFailedLeaf_", &fromFailedLeaf_); // SMI 4-Jan-16
 	bind("toFailedLeaf_", &toFailedLeaf_); // SMI 13-Mar-16
@@ -135,6 +139,8 @@ TcpAgent::TcpAgent()
 	bind("dynamicMappingThresholdGL2GL_", &dynamicMappingThresholdGL2GL_); // 13th July
 
 	bind("flowBender_", &flowBender_); // 13-Jan-17
+	bind("flowBender_T", &flowBender_T); // 3-Jul-17
+	bind("flowBender_N", &flowBender_N); // 3-Jul-17
 
 	bind("realisticFailure_", &realisticFailure_); // SMI 8-Mar
 	bind("failureCase_", &failureCase_); // SMI 8-Mar
@@ -148,11 +154,11 @@ TcpAgent::TcpAgent()
 	bind("failureDetectionDelay_", &failureDetectionDelay_);
 	bind("numUplinks", &numUplinks); // 9-Mar-16
 
-	bind("failedLinkLeaf_", &failedLinkLeaf_); // 25-Feb-17
-	bind("multipleFailure_", &multipleFailure_); // 18-Feb-17
+	//bind("failedLinkLeaf_", &failedLinkLeaf_); // 25-Feb-17
+	//bind("multipleFailure_", &multipleFailure_); // 18-Feb-17
 	bind("numFailures_", &numFailures_); // 20-Feb-17
-	bind("secondFailedLinkLeaf_", &secondFailedLinkLeaf_);  // 18-Feb-17
-	bind("secondFailedLinkSpine_", &secondFailedLinkSpine_);  // 18-Feb-17
+	// bind("secondFailedLinkLeaf_", &secondFailedLinkLeaf_);  // 18-Feb-17
+	// bind("secondFailedLinkSpine_", &secondFailedLinkSpine_);  // 18-Feb-17
 	//bind("flowFacingMultipleFailures_", &flowFacingMultipleFailures_);  // 19-Feb-17
 	bind("DA_Flow_", &DA_Flow_);  // 19-Feb-17
 
@@ -160,7 +166,13 @@ TcpAgent::TcpAgent()
 	bind("srcLeaf_", &srcLeaf_);  // 24-Feb-17
 	bind("destLeaf_", &destLeaf_);  // 24-Feb-17
 
+	bind("healthyLinkCapacity", &healthyLinkCapacity);  // 20-June-17
+	bind("flowsizeBytes", &flowsizeBytes); // 21-June-17
+
+
 #endif /* TCP_DELAY_BIND_ALL */
+
+	allFailedLinks = new char[100]; // 14 June 2017
 
 }
 
@@ -193,7 +205,7 @@ TcpAgent::delay_bind_init_all()
 	delay_bind_init_one("flowcellSizePkts_");
 	delay_bind_init_one("roundRobin_");
 	delay_bind_init_one("failureRatio_");
-	delay_bind_init_one("failedLinkIndex_");
+	//delay_bind_init_one("failedLinkIndex_");
 	delay_bind_init_one("failureAware_");
 	delay_bind_init_one("fromFailedLeaf_");
 	delay_bind_init_one("toFailedLeaf_"); // SMI 13-Mar-16
@@ -210,6 +222,8 @@ TcpAgent::delay_bind_init_all()
 	delay_bind_init_one("dynamicMappingThresholdGL2GL_"); // 13th July
 
 	delay_bind_init_one("flowBender_"); // 13-Jan-17
+	delay_bind_init_one("flowBender_T"); // 3-Jul-17
+	delay_bind_init_one("flowBender_N"); // 3-Jul-17
 
 	delay_bind_init_one("realisticFailure_"); // SMI 8-Mar
 	delay_bind_init_one("failureCase_"); // SMI 8-Mar
@@ -222,16 +236,19 @@ TcpAgent::delay_bind_init_all()
 	delay_bind_init_one("failureDetectionDelay_");
 	delay_bind_init_one("numUplinks"); // 9-Mar-16
 
-	delay_bind_init_one("failedLinkLeaf_"); // 25-Feb-17
-	delay_bind_init_one("multipleFailure_"); // 18-Feb-17
+	//delay_bind_init_one("failedLinkLeaf_"); // 25-Feb-17
+	//delay_bind_init_one("multipleFailure_"); // 18-Feb-17
 	delay_bind_init_one("numFailures_"); // 20-Feb
-	delay_bind_init_one("secondFailedLinkLeaf_");  // 18-Feb-17
-	delay_bind_init_one("secondFailedLinkSpine_");  // 18-Feb-17
+	// delay_bind_init_one("secondFailedLinkLeaf_");  // 18-Feb-17
+	// delay_bind_init_one("secondFailedLinkSpine_");  // 18-Feb-17
 	//delay_bind_init_one("flowFacingMultipleFailures_");  // 18-Feb-17
 	delay_bind_init_one("DA_Flow_");  // 27-Mar-17
 
 	delay_bind_init_one("srcLeaf_");  // 24-Feb-17
 	delay_bind_init_one("destLeaf_");  // 24-Feb-17
+
+	delay_bind_init_one("healthyLinkCapacity");  // 20-June-17
+	delay_bind_init_one("flowsizeBytes"); // 21-June-17
 
         delay_bind_init_one("SetCWRonRetransmit_");
         delay_bind_init_one("old_ecn_");
@@ -355,7 +372,7 @@ TcpAgent::delay_bind_dispatch(const char *varName, const char *localName, TclObj
         if (delay_bind(varName, localName, "roundRobin_", &roundRobin_, tracer)) return TCL_OK;
 
 	if (delay_bind(varName, localName, "failureRatio_", &failureRatio_, tracer)) return TCL_OK; // SMI 23-Dec-15
-	if (delay_bind(varName, localName, "failedLinkIndex_", &failedLinkIndex_, tracer)) return TCL_OK; // SMI 23-Dec-15
+	//if (delay_bind(varName, localName, "failedLinkIndex_", &failedLinkIndex_, tracer)) return TCL_OK; // SMI 23-Dec-15
 	if (delay_bind(varName, localName, "failureAware_", &failureAware_, tracer)) return TCL_OK; // SMI 23-Dec-15
 	if (delay_bind(varName, localName, "fromFailedLeaf_", &fromFailedLeaf_, tracer)) return TCL_OK; // SMI 4-Jan-16
 	if (delay_bind(varName, localName, "toFailedLeaf_", &toFailedLeaf_, tracer)) return TCL_OK; // SMI 13-Mar-16
@@ -373,6 +390,8 @@ TcpAgent::delay_bind_dispatch(const char *varName, const char *localName, TclObj
 	if (delay_bind(varName, localName, "dynamicMappingThresholdGL2GL_", &dynamicMappingThresholdGL2GL_, tracer)) return TCL_OK; // SMI 13-Jul-16
 
 	if (delay_bind(varName, localName, "flowBender_", &flowBender_, tracer)) return TCL_OK; // 13-Jan-17 
+	if (delay_bind(varName, localName, "flowBender_T", &flowBender_T, tracer)) return TCL_OK; // 3-Jul-17
+	if (delay_bind(varName, localName, "flowBender_N", &flowBender_N, tracer)) return TCL_OK; // 3-Jul-17
 
 	if (delay_bind(varName, localName, "realisticFailure_", &realisticFailure_, tracer)) return TCL_OK; // SMI 8-Mar-16
 	if (delay_bind(varName, localName, "failureCase_", &failureCase_, tracer)) return TCL_OK; // SMI 8-Mar-16
@@ -386,18 +405,21 @@ TcpAgent::delay_bind_dispatch(const char *varName, const char *localName, TclObj
 	if (delay_bind(varName, localName, "failureDetectionDelay_", &failureDetectionDelay_, tracer)) return TCL_OK;
 	if (delay_bind(varName, localName, "numUplinks", &numUplinks, tracer)) return TCL_OK; // 9-Mar-16
 
-	if (delay_bind(varName, localName, "failedLinkLeaf_", &failedLinkLeaf_, tracer)) return TCL_OK; // 25-Feb-17
-	if (delay_bind(varName, localName, "multipleFailure_", &multipleFailure_, tracer)) return TCL_OK; // 18-Feb-17
+	//if (delay_bind(varName, localName, "failedLinkLeaf_", &failedLinkLeaf_, tracer)) return TCL_OK; // 25-Feb-17
+	//if (delay_bind(varName, localName, "multipleFailure_", &multipleFailure_, tracer)) return TCL_OK; // 18-Feb-17
 	if (delay_bind(varName, localName, "numFailures_", &numFailures_, tracer)) return TCL_OK; // 20-Feb-17
 
-	if (delay_bind(varName, localName, "secondFailedLinkLeaf_", &secondFailedLinkLeaf_, tracer)) return TCL_OK; // 18-Feb-17
-	if (delay_bind(varName, localName, "secondFailedLinkSpine_", &secondFailedLinkSpine_, tracer)) return TCL_OK; // 18-Feb-17
+	// if (delay_bind(varName, localName, "secondFailedLinkLeaf_", &secondFailedLinkLeaf_, tracer)) return TCL_OK; // 18-Feb-17
+	// if (delay_bind(varName, localName, "secondFailedLinkSpine_", &secondFailedLinkSpine_, tracer)) return TCL_OK; // 18-Feb-17
 	//if (delay_bind(varName, localName, "flowFacingMultipleFailures_", &flowFacingMultipleFailures_, tracer)) return TCL_OK; // 19-Feb-17
 	if (delay_bind(varName, localName, "DA_Flow_", &DA_Flow_, tracer)) return TCL_OK; // 27-Mar-17
 
 
 	if (delay_bind(varName, localName, "srcLeaf_", &srcLeaf_, tracer)) return TCL_OK; // 24-Feb-17
 	if (delay_bind(varName, localName, "destLeaf_", &destLeaf_, tracer)) return TCL_OK; // 24-Feb-17
+
+	if (delay_bind(varName, localName, "healthyLinkCapacity", &healthyLinkCapacity, tracer)) return TCL_OK; // 20-June-17
+	if (delay_bind(varName, localName, "flowsizeBytes", &flowsizeBytes, tracer)) return TCL_OK; // 21-June-17
 
 	// Mohammad
         if (delay_bind_bool(varName, localName, "dctcp_", &dctcp_, tracer)) return TCL_OK; 
@@ -833,7 +855,7 @@ void TcpAgent::output(int seqno, int reason)
 	int databytes = hdr_cmn::access(p)->size();
 	tcph->seqno() = seqno;
 
-	//printf("DEBUG: tcp:output() flowcell_=%d flowcellSizePkts_=%d ndatapack_=%d \n", flowcell_, flowcellSizePkts_, (int) ndatapack_);
+	// printf("DEBUG: tcp:output() flowcell_=%d flowcellSizePkts_=%d ndatapack_=%d \n", flowcell_, flowcellSizePkts_, (int) ndatapack_);
 	// TODO: We still do not cater for the case of how to deal with flowcells for when weight for failed link is not 1
 
 	failureDetected_ = 0;
@@ -851,38 +873,231 @@ void TcpAgent::output(int seqno, int reason)
 	if(flowcell_) {
 		if(ndatapack_ == 0) { // case of first packet in the flow, so do some initializations
 
-#ifdef debug_tcp_smi
-			printf("DEBUG to DEBUG \n");
-			printf("DEBUG-0: 1st PKT of FLOW: failureRatio_=%d, failedLinkIndex_=%d, failureAware_=%d numUplinks=%d \n", failureRatio_, failedLinkIndex_, failureAware_, numUplinks);
-			printf("DEBUG-0: 1st PKT of FLOW: multipleFailure_=%d, numFailures_=%d ", multipleFailure_, numFailures_);
-#endif
+			if(debug_tcp_smi) {
+				printf("DEBUG-0: 1st PKT: failureRatio_=%d, failureAware_=%d numUplinks=%d ", failureRatio_, failureAware_, numUplinks);
+				printf(" numFailures_=%d \n", numFailures_);
+			}
 			uplinkWeights = new int[numUplinks];
 			linkID_ = numUplinks - 1;
 			rfactor = 0;
 
+			if(numFailures_ > 0) {
+
+				failedLinks = new failedLink[numFailures_];
+
+				// populate the list for no failure SVT
+				svt_NoFailure = new int[numUplinks];
+				svt_partialFailure = new int[numUplinks];
+				fullFailureSpines = new int[numUplinks];
+
+				svt_DA_partialFailure = new int[numUplinks]; // spines involved in an indirect partial failure
+				svt_DA_fullFailure = new int[numUplinks]; // spines involved in an indirect full failure
+				svt_DA_NoFailure = new int[numUplinks]; // spines that face no direct failure and not related to any indirect failure either
+
+				for(int j=0; j < numUplinks; j++) {
+					svt_NoFailure[j] = 1;
+					svt_DA_NoFailure[j] = 1;
+
+					svt_partialFailure[j] = -1;
+					fullFailureSpines[j] = -1;
+
+					svt_DA_partialFailure[j] = -1;
+					svt_DA_fullFailure[j] = -1;
+				}
+
+				char* all_f_links = new char[100];
+				strcpy(all_f_links, allFailedLinks);
+				char* token = strtok(all_f_links, ",;");
+
+				int failed_link_fields[numFailures_ * 3];
+				int flink = 0;
+
+				while(token != NULL) {
+					failed_link_fields[flink] = atoi(token);
+					token = strtok(NULL, ",;");
+					flink++;
+				}
+
+				for(flink = 0; flink < numFailures_; flink++) {
+					failedLinks[flink].leaf = failed_link_fields[(flink*3)];
+					failedLinks[flink].spine = failed_link_fields[(flink*3)+1];
+					failedLinks[flink].failureRatio = failed_link_fields[(flink*3)+2];
+				}
+
+				// DEBUG
+				if(debug_tcp_smi) {
+					for(int k = 0; k < numFailures_; k++) {
+						printf("failed link %d: leaf=%d spine=%d f_ratio=%d \n", k, failedLinks[k].leaf, failedLinks[k].spine, failedLinks[k].failureRatio);
+					}
+				}
+			}
+
 			// for future, we need to make number of failures completely flexible, maybe 3 or 4 or more
 			// 20-Feb-17
-			if(multipleFailure_ && (numFailures_ > 1)) {
-				failedLinkLeafs = new int[numFailures_];
-				failedLinkSpines = new int[numFailures_];
+			if(numFailures_ > 1) { // removed AND with multipleFailure_
 
-				/* This is a temporary fix, need to improve on this.... TODO */
-				failedLinkSpines[0] = failedLinkIndex_;
-				failedLinkSpines[1] = secondFailedLinkSpine_;
+				// comment out for later ....	
+				//////////////////////////////////////////
+				// failedLinkLeafs = new int[numFailures_];
+				// failedLinkSpines = new int[numFailures_];
 
-				failedLinkLeafs[0] = failedLinkLeaf_;
-				failedLinkLeafs[1] = secondFailedLinkLeaf_;
+				// failedLinkSpines[0] = failedLinkIndex_;
+				// failedLinkSpines[1] = secondFailedLinkSpine_;
+				// failedLinkLeafs[0] = failedLinkLeaf_;
+				// failedLinkLeafs[1] = secondFailedLinkLeaf_;
+				//////////////////////////////////////////
+
+				//printf("Calculating num of failures faced by (srcLeaf_=%d, destLeaf_=%d) pair \n", srcLeaf_, destLeaf_);
 
 				// calculate the number of direct failures faced by this srcLeaf+destLeaf pair
 				for(int j=0; j<numFailures_; j++) {
-					if(failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) {
-						numDirectFailures_++;
+					if(failedLinks[j].leaf==srcLeaf_ || failedLinks[j].leaf==destLeaf_) {
+						// check for duplicates, then populate the relevant SVT, and then add to the relevant counter
+						if(svt_NoFailure[failedLinks[j].spine]==1) {
+							svt_NoFailure[failedLinks[j].spine] = -1;
+							svt_DA_NoFailure[failedLinks[j].spine] = -1;
+							numDirectFailures_++;
+							if(failedLinks[j].failureRatio==100) {
+								fullFailureSpines[failedLinks[j].spine] = 1;
+								numDirectFullFailurePaths++;
+							} else {
+								svt_partialFailure[failedLinks[j].spine] = 1;
+								numDirectPartialFailurePaths++;
+							}
+							// If this relevant spine was considered among the DA_spines, we should now remove it from there....
+							if(svt_DA_partialFailure[failedLinks[j].spine]==1) {
+								svt_DA_partialFailure[failedLinks[j].spine] = -1;
+								numIndirectPartialFailurePaths--;
+							} else if(svt_DA_fullFailure[failedLinks[j].spine]==1) {
+								svt_DA_fullFailure[failedLinks[j].spine] = -1;
+								numIndirectFullFailurePaths--;
+							}
+						} else {
+							// this may be the case where 2 failures share the same spine
+							if(failedLinks[j].failureRatio==100) {
+								if(fullFailureSpines[failedLinks[j].spine]!=1) {
+									fullFailureSpines[failedLinks[j].spine] = 1;
+									numDirectFullFailurePaths++;
+									if(svt_partialFailure[failedLinks[j].spine]==1) {
+										svt_partialFailure[failedLinks[j].spine] = -1;
+										numDirectPartialFailurePaths--;
+									}
+								}
+							} // nothing to be done if new failure is partial, since it does not change anything if it shares the spine with another failure
+						}						
+						/* With svt_NoFailure, an entry=-1 means this spine is not in this SVT
+						   With svt_partialFailure, an entry=1 means this spine is in the SVT
+						   With fullFailureSpines, an entry=1 means this spine is fully failed
+						*/
+					} else {
+						// an indirect failure (maybe full or partial)
+
+						if(svt_NoFailure[failedLinks[j].spine] == -1) {
+							// if this spine is already removed from svt_NoFailure, this means it is involved in a direct failure, therefore it will not
+							// be considered as a DA_spine
+
+						} else {
+							if(svt_DA_NoFailure[failedLinks[j].spine] == -1) {
+								// this spine is already known as a DA Spine
+								// TODO :: if this failure is a DA Indirect Full Failure, do we need to check if the original decision making this 
+								// a DA Spine was due to a full or partial failure??
+
+								// if(svt_DA_partialFailure[failedLinks[j].spine]==1) {
+								// 	svt_DA_partialFailure[failedLinks[j].spine] = -1;
+								// 	numIndirectPartialFailurePaths--;
+								// } else if(svt_DA_fullFailure[failedLinks[j].spine]==1) {
+								// 	svt_DA_fullFailure[failedLinks[j].spine] = -1;
+								// 	numIndirectFullFailurePaths--;
+								// }
+							} else {
+								// otherwise, we can look to see whether we need to add this to the svt_DA_partialFailure or the svt_DA_fullFailure
+								if(failedLinks[j].failureRatio==100) {									
+									svt_DA_fullFailure[failedLinks[j].spine] = 1; // add to svt_DA_fullFailure
+									numIndirectFullFailurePaths++;									
+								} else {
+									svt_DA_partialFailure[failedLinks[j].spine] = 1; // add to svt_DA_partialFailure
+									numIndirectPartialFailurePaths++;									
+								}
+								svt_DA_NoFailure[failedLinks[j].spine] = -1; // remove from svt_DA_NoFailure
+							}
+						}
 					}
-				} 
+				}
+
+				/* TODO: In the code above and below, where we prepare the different SVTs and we calculate probs and assign the flow to a particular SVT,
+				   have we taken care of the issue of (1) flow size and (2) dynamic mapping? Do we need to worry about the matter of toFailedLeaf and fromFailedLeaf
+				   since we have not considered it here???
+				 */ 
+
+				/** This is where we should calculate probabilities to decide whether this flow should map to: */
+
+				int partialFailurePaths_BW = numDirectPartialFailurePaths*(healthyLinkCapacity/failureRatio_);
+				int healthyPaths_BW = (numUplinks-numDirectPartialFailurePaths-numDirectFullFailurePaths)*healthyLinkCapacity;
+				int total_BW = partialFailurePaths_BW + healthyPaths_BW;
+				int indirectFailurePaths_BW = (numIndirectFullFailurePaths + numIndirectPartialFailurePaths) * healthyLinkCapacity;
+
+				// TEMP: temporarily commented this for debugging purposes -- 21-June-2017
+				if(toFailedLeaf_) {
+					total_BW = total_BW * (numUplinks-1); // extra cautious for to-failed-leaf case, as before
+				}
+
+				int randNum_totalBW = Random::integer(total_BW);
+				if(debug_tcp_smi) {
+					printf("\n srcLeaf_=%d destLeaf_=%d flowsizeBytes=%d healthyLinkCapacity=%d " , srcLeaf_, destLeaf_, flowsizeBytes, healthyLinkCapacity);
+					printf("dynamicMapping_=%d healthyPathOnly_=%d DA_sprayOnly_=%d \n", dynamicMapping_, healthyPathOnly_, DA_sprayOnly_);
+					printf("numIndirectFullFailurePaths=%d, numIndirectPartialFailurePaths=%d ", numIndirectFullFailurePaths, numIndirectPartialFailurePaths);
+					printf("numDirectPartialFailurePaths=%d, numDirectFullFailurePaths=%d ", numDirectPartialFailurePaths, numDirectFullFailurePaths);
+					printf("total_BW=%d healthyPaths_BW=%d partialFailurePaths_BW=%d \n", total_BW, healthyPaths_BW, partialFailurePaths_BW);
+					printf("indirectFailurePaths_BW=%d dynamicMappingThreshold_=%d dynamicMappingThresholdGL2GL_=%d \n", indirectFailurePaths_BW, dynamicMappingThreshold_, dynamicMappingThresholdGL2GL_);
+					printf("randNum_totalBW=%d \n\n", randNum_totalBW);
+				}
+
+				// handle fromFailedLeaf and toFailedLeaf -- this should only affect the probabilities for svt_partialFailure flows
+
+				// Remapping perhaps if DA-causing traffic exists or ceases to exist TODO
+				Tcl& tcl = Tcl::instance();
+				char buff[64];
+				sprintf (buff, "[Simulator instance] get-incoming-traffic %d %d", srcLeaf_, destLeaf_); 
+				tcl.evalc(buff);
+				const char* incTraffic = tcl.result();
+				if(debug_tcp_smi) {
+					printf("DEBUG: incomingTrafficToDestLeaf=%s for srcleaf=%d, destleaf=%d \n", incTraffic, srcLeaf_, destLeaf_);
+				}
+				int incomingTrafficToDestLeaf = atoi(incTraffic);
+
+				// if(incomingTrafficToDestLeaf>0) { // choose from 10, 11 or 12
+				// } else { // choose from 0 or 1 }
+				
+				//if(((flowsizeBytes < dynamicMappingThreshold_) || dynamicMapping_==1) && healthyPathOnly_==0 && DA_sprayOnly_==0 && (randNum_totalBW < partialFailurePaths_BW)) {
+				if(((flowsizeBytes < dynamicMappingThreshold_) || dynamicMapping_==1) && healthyPathOnly_==0 && (randNum_totalBW < partialFailurePaths_BW)) {
+					svtMapping = 1; // svt_partialFailure chosen
+				} else {
+					if((healthyPathOnly_==0 && DA_sprayOnly_==0) && ((numIndirectFullFailurePaths+numIndirectPartialFailurePaths) > 0) && incomingTrafficToDestLeaf ) { 
+						int randNum_healthyBW = Random::integer(healthyPaths_BW);
+						//printf("randNum_healthyBW=%d \n ", randNum_healthyBW);
+						if(((flowsizeBytes < dynamicMappingThresholdGL2GL_) || dynamicMapping_==1) && (randNum_healthyBW < indirectFailurePaths_BW)) {
+							// select from one of the indirect failure SVTs
+							//printf("inside here \n");
+							int randNum_DA_indirectFailureBW = Random::integer(indirectFailurePaths_BW);
+							if( randNum_DA_indirectFailureBW < (numIndirectPartialFailurePaths * healthyLinkCapacity)) {
+								svtMapping = 11; // svt_DA_partialFailure
+							} else {
+								svtMapping = 12; //  svt_DA_fullFailure
+							}
+						} else {
+							svtMapping = 10; // svt_DA_NoFailure
+						}
+					} else { // case of SAPS-DAU or HPO, or just zero indirect failures
+						svtMapping = 0; // svt_NoFailure 
+					}
+				}
 			}
-#ifdef debug_tcp_smi
-			printf("DEBUG-0: 1st PKT of FLOW: numDirectFailures_=%d \n", numDirectFailures_);
-#endif
+
+			printf("DEBUG: tcp:output() ndatapack_=%d svtMapping=%d \n", (int) ndatapack_, svtMapping);
+
+			if(debug_tcp_smi) {
+				printf("DEBUG-0: 1st PKT of FLOW: numDirectFailures_=%d \n", numDirectFailures_);
+			}
 
 	/* CHALLENGE: 28-March
 
@@ -903,7 +1118,6 @@ void TcpAgent::output(int seqno, int reason)
 	  for HPO, we must also not use the multiple affected spines....
 
 	 */
-
 			/*
 			  Also, enable all left flows to send to the rightmost rack, and of course replicate changes made to all-to-all part of traffic generation to the left-to-right piece of code, making sure
 			  that new expected variables for build-short-lived are also passed properly.
@@ -913,82 +1127,85 @@ void TcpAgent::output(int seqno, int reason)
 					if(selectiveSpraying_) { // HPO or SPS or SPPS
 						/* 29-March-17: This section is where there is a possibility of DA flows, where numDirectFailures_ is 1. When it is 2, no DA flows */
 						if(poorPathFlow_) {
-							if(multipleFailure_) {
-								for(int i=0; i < numFailures_; i++) {
-									if(failedLinkLeafs[i]==srcLeaf_ || failedLinkLeafs[i]==destLeaf_) {
-										linkID_ = failedLinkSpines[i]; 
-										break;
-									}
-								}
+							if(numFailures_ > 1) { // commented if(multipleFailure_) on 9-Jul-17 SMI
+								// for(int i=0; i < numFailures_; i++) {
+								// 	if(failedLinkLeafs[i]==srcLeaf_ || failedLinkLeafs[i]==destLeaf_) {
+								// 		linkID_ = failedLinkSpines[i]; 
+								// 		break;
+								// 	}
+								// }
 							}
 							else {
-								linkID_ = failedLinkIndex_;
+								linkID_ = failedLinks[0].spine; //linkID_ = failedLinkIndex_; Commented on 9-Jul-17
 							}
 							originallyHashed_ = 1; // 14 July 2016
-						} else if(DA_Flow_ && multipleFailure_) { /* DA spine flow, we have to set it to that spine which is an indirect failure for this src-leaf/dest-leaf combo */
-							for(int failure=0; failure<numFailures_; failure++) {
-								if(failedLinkLeafs[failure]!=srcLeaf_ && failedLinkLeafs[failure]!=destLeaf_) {
-									linkID_ = failedLinkSpines[failure];
-									break;
-								}
-							}
+						} else if(DA_Flow_ && numFailures_ > 0) { /* DA spine flow, we have to set it to that spine which is an indirect failure for this src-leaf/dest-leaf combo */
+							// for(int failure=0; failure<numFailures_; failure++) {
+							// 	if(failedLinkLeafs[failure]!=srcLeaf_ && failedLinkLeafs[failure]!=destLeaf_) {
+							// 		linkID_ = failedLinkSpines[failure];
+							// 		break;
+							// 	}
+							// }
 						} else {
 							/* if multiple failures, find first spine that is not involved in any of the failures (previously it was any failure involving this src-leaf/dest-leaf pair */
-							if(multipleFailure_) {
-								for(int i=0; i < numUplinks; i++) {
-									int spineIsFine=1;
-									for(int j=0; j<numFailures_; j++) {
-										if(i==failedLinkSpines[j]) {
-											// TODO: Add this clause (failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) when we know the scheme is SPPS-DASO
-											spineIsFine=0;
-											break;
-										}
-									}
-									if(spineIsFine) {
-										linkID_ = i;
-										break;
-									}
-								}
+							if(numFailures_ > 1) {
+								// for(int i=0; i < numUplinks; i++) {
+								// 	int spineIsFine=1;
+								// 	for(int j=0; j<numFailures_; j++) {
+								// 		if(i==failedLinkSpines[j]) {
+								// 			// TODO: Add this clause (failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) when we know the scheme is SPPS-DASO
+								// 			spineIsFine=0;
+								// 			break;
+								// 		}
+								// 	}
+								// 	if(spineIsFine) {
+								// 		linkID_ = i;
+								// 		break;
+								// 	}
+								// }
 							}
 							else { // do we need to initialize anything here??? maybe play with rfactor value if want to use it for something else ?? 
-								linkID_ = (failedLinkIndex_ + 1) % numUplinks; // SMI JUl 29
+								// linkID_ = (failedLinkIndex_ + 1) % numUplinks; // SMI JUl 29
+								linkID_ = (failedLinks[0].spine + 1) % numUplinks;
 							}
 						}
 					} else { // WPS, WFCS && ??						
-						if(multipleFailure_) {
+						if(numFailures_ > 1) { // if(multipleFailure_) Commented on 9-Jul-17
 							rfactor = (numUplinks - numDirectFailures_) * failureRatio_; /* here we should minus the numOfFailures with this srcLeaf_ & destLeaf_  */
 						} else {
 							rfactor = (numUplinks - 1) * failureRatio_;
 						}
 
-#ifdef debug_tcp_smi
-						printf("DEBUG-0.1: 1st PKT of FLOW: WFCS rfactor=%d \n", rfactor);
-#endif
+						if(debug_tcp_smi) {
+							printf("DEBUG-0.1: 1st PKT of FLOW: WFCS rfactor=%d \n", rfactor);
+						}
 
 					}
 				} else { // WPS-P, WFCS-P ??
-
 					for(int i = 0; i < numUplinks; i++) {
-						if(multipleFailure_) {
-							int uplinkFailed=0;
-							for(int j=0; j<numFailures_;j++) {
-								if(i==failedLinkSpines[j] && (failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_)) {
-									uplinkFailed=1; // make sure this link is actually failed...
-									break;
-								}
+						//if(numFailures_ > 0) {
+						int uplinkFailed=0;
+						int uplinkFailureRatio=1;
+						for(int j=0; j<numFailures_;j++) {
+							if(i==failedLinks[j].spine && (failedLinks[j].leaf==srcLeaf_ || failedLinks[j].leaf==destLeaf_)) {
+								//if(i==failedLinkSpines[j] && (failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_)) {
+								uplinkFailureRatio=failedLinks[j].failureRatio;
+								uplinkFailed=1; // make sure this link is actually failed...
+								break;
 							}
-							if(uplinkFailed) {
-								uplinkWeights[i] = 10/failureRatio_;
-							} else {
-								uplinkWeights[i] = 10;
-							}
-						} else {
-							if(i==failedLinkIndex_) {
-								uplinkWeights[i] = 10/failureRatio_;
-							} else {
-								uplinkWeights[i] = 10; //rfactor += 10;
-							} 
 						}
+						if(uplinkFailureRatio==100) { // 100 indicates full failure // 9-Jul-17
+							uplinkWeights[i] = 0;
+						} else {
+							uplinkWeights[i] = 10/uplinkFailureRatio;
+						}
+						// } else {
+						// 	if(i==failedLinkIndex_) {
+						// 		uplinkWeights[i] = 10/failureRatio_;
+						// 	} else {
+						// 		uplinkWeights[i] = 10; //rfactor += 10;
+						// 	} 
+						//}
 						totalUplinkWeights += uplinkWeights[i];
 					}
 				}
@@ -1003,41 +1220,43 @@ void TcpAgent::output(int seqno, int reason)
 
 						if(selectiveSpraying_) { 
 							if(poorPathFlow_) {  /* this indicates that this flow is directed to the spine affected by delay asymmetry */
-#ifdef debug_tcp_smi
-								printf("In TCP.cc : GL to GL hashed flow.... COOL!!!\n");
-#endif
-								if(multipleFailure_) {
-									for(int i=0; i < numFailures_ ; i++) {
-										if(failedLinkLeafs[i]!=srcLeaf_ && failedLinkLeafs[i]!=destLeaf_) {
-											linkID_ = failedLinkSpines[i];
-											break;
-										}
-									}
+								if(debug_tcp_smi) {
+									printf("In TCP.cc : GL to GL hashed flow.... COOL!!!\n");
+								}
+								if(numFailures_ > 1 ) { // if(multipleFailure_) Commented 9-Jul-17
+									// for(int i=0; i < numFailures_ ; i++) {
+									// 	if(failedLinkLeafs[i]!=srcLeaf_ && failedLinkLeafs[i]!=destLeaf_) {
+									// 		linkID_ = failedLinkSpines[i];
+									// 		break;
+									// 	}
+									// }
 								} else {
-									linkID_ = failedLinkIndex_; // case of SPS, some flows are hashed onto the "less-used-path"
+									//linkID_ = failedLinkIndex_; // case of SPS, some flows are hashed onto the "less-used-path"
+									linkID_ = failedLinks[0].spine; 
 								}
 								originallyHashed_ = 1; // 14 July 2016
-#ifdef debug_tcp_smi
-								printf("This is a Hashed Flow with linkID_=%d !!\n", linkID_);
-#endif
+								if(debug_tcp_smi) {
+									printf("This is a Hashed Flow with linkID_=%d !!\n", linkID_);
+								}
 							} else { // good-leaf-2-good-leaf and not going to delay asymmetry affected spine....
-								if(multipleFailure_) {
-									// We need that spine that is (1) not affected by any delay asymmetry
-									for(int i=0; i < numUplinks; i++) {
-										int spineIsFine=1;
-										for(int j=0; j<numFailures_; j++) {
-											if(i==failedLinkSpines[j]) {
-												spineIsFine=0;
-												break;
-											}
-										}
-										if(spineIsFine) {
-											linkID_ = i;
-											break;
-										}
-									}
-								} else {
-									linkID_ = (failedLinkIndex_ + 1) % numUplinks; // SMI JUl 29
+								if(numFailures_ > 1) { // if(multipleFailure_) Commented 9-Jul-17
+									// // We need that spine that is (1) not affected by any delay asymmetry
+									// for(int i=0; i < numUplinks; i++) {
+									// 	int spineIsFine=1;
+									// 	for(int j=0; j<numFailures_; j++) {
+									// 		if(i==failedLinkSpines[j]) {
+									// 			spineIsFine=0;
+									// 			break;
+									// 		}
+									// 	}
+									// 	if(spineIsFine) {
+									// 		linkID_ = i;
+									// 		break;
+									// 	}
+									// }
+								} else {									
+									// linkID_ = (failedLinkIndex_ + 1) % numUplinks; // SMI JUl 29
+									linkID_ = (failedLinks[0].spine + 1) % numUplinks;
 								}
 							}
 						} else { // 17-April -- for WFCS ?? no direct failures on this (src leaf - dest leaf) combination
@@ -1051,13 +1270,51 @@ void TcpAgent::output(int seqno, int reason)
 				}
 			}
 			flowCellMod_ = flowcellSizePkts_ * rfactor;
-#ifdef debug_tcp_smi
-			printf("DEBUG-1 FailureStartTime=%f; FailureDuration=%f; FailureDetectionTime=%f \n ", failureStartTime_, failureDuration_, failureDetectionDelay_);
-			printf("DEBUG-2: numUplinks=%d; totalUplinkWeights=%d; flowCellMod_ = %d ; rfactor=%d ", numUplinks, totalUplinkWeights, flowCellMod_, rfactor);
-			printf(" selectiveSpraying_=%d; poorPathFlow_=%d \n", selectiveSpraying_, poorPathFlow_);
-			printf("DEBUG-3: realisticFailure_=%d failureCase_=%d  failureDetected_=%d \n", realisticFailure_, failureCase_,  failureDetected_);
-			printf("DEBUG-4: NorthSouth=%d; now=%f", northSouthFlow_, time_now);
-#endif
+			if(debug_tcp_smi) {
+				printf("DEBUG-1 FailureStartTime=%f; FailureDuration=%f; FailureDetectionTime=%f \n ", failureStartTime_, failureDuration_, failureDetectionDelay_);
+				printf("DEBUG-2: numUplinks=%d; totalUplinkWeights=%d; flowCellMod_ = %d ; rfactor=%d ", numUplinks, totalUplinkWeights, flowCellMod_, rfactor);
+				printf(" selectiveSpraying_=%d; poorPathFlow_=%d \n", selectiveSpraying_, poorPathFlow_);
+				printf("DEBUG-3: realisticFailure_=%d failureCase_=%d  failureDetected_=%d \n", realisticFailure_, failureCase_,  failureDetected_);
+				printf("DEBUG-4: NorthSouth=%d; now=%f \n", northSouthFlow_, time_now);
+
+				// svtMapping = 1; // svt_partialFailure chosen
+				// svtMapping = 0; // svt_NoFailure
+				// svtMapping = 12; //  svt_DA_fullFailure
+				// svtMapping = 11; // svt_DA_partialFailure
+				// svtMapping = 10; // svt_DA_NoFailure
+
+				if(selectiveSpraying_) {
+					//int fID_ = int(fid_);
+					//if(fID_==1)
+					printf("SVT 0='no-failure; 1='partial-failure'; 10='no-DA-no-failure'; 11='DA-partial-failure'; 12='DA-full-failure'; \n");
+					printf("SVT Chosen=%d! Src-Leaf=%d Dest-Leaf=%d \n", svtMapping, srcLeaf_, destLeaf_);  
+					printf("SVT Partial Failure:\t");  
+					for(int j=0; j < numUplinks; j++) {
+						printf("%d \t", svt_partialFailure[j]);
+					}
+					printf("\nSVT No Failure:\t");  
+					for(int j=0; j < numUplinks; j++) {
+						printf("%d \t", svt_NoFailure[j]);
+					}
+					printf("\nSVT DA Full Failure:\t");  
+					for(int j=0; j < numUplinks; j++) {
+						printf("%d \t", svt_DA_fullFailure[j]);
+					}
+					printf("\nSVT DA Partial Failure:\t");  
+					for(int j=0; j < numUplinks; j++) {
+						printf("%d \t", svt_DA_partialFailure[j]);
+					}
+					printf("\nSVT No-DA No-Failure:\t");  
+					for(int j=0; j < numUplinks; j++) {
+						printf("%d \t", svt_DA_NoFailure[j]);
+					}
+					printf("\n");
+
+					// for(int j=0; j < numUplinks; j++) {
+					// 	fullFailureSpines[j] = -1;
+					// }
+				}
+			}
 		} // end of IF for the first packet...
 
 		/*
@@ -1067,6 +1324,25 @@ void TcpAgent::output(int seqno, int reason)
 		  --> check to see if the large flows that are now allowed to be DA flows, etc... are also being catered for (when they are either FFL or 2FL)
 		 */		
 
+
+		/**
+
+		   Challenge for 21-June-2017::
+ 
+		   1) Comment out code for multipleFailure_==1 for the selectiveSpraying_ cases
+		   2) Replace with a standalone block that simply does the following:
+		   - reads the relevant svtMapping value and does the necessary when it the packet constitutes a new flowcell
+		   - if dynamicMapping_ is true, we have to check ndatabytes_ for when it crosses either the dynamicMappingThresholdGL2GL_ (svt_DA_fullFailure or svt_DA_partialFailure) 
+		   or dynamicMappingThreshold_ (if svt_partialFailure)
+		   3) This block should no longer consider the redundant variables such as failureCase_ and DA_Flow_ (perhaps we should set relevant values for DA_Flow_ and poorPathFlow_
+		   given the value we have for svtMapping
+		   4) Ponder over the initial value of linkID_, will it have any undesirable impact on the performance of SAPS?
+		   5) Handle for failureDetected_ properly
+
+		   Review code from lines 1273 to 1421
+
+		 **/
+
 		if(failureAware_ == 0) { // Unweighted Flowcell Spraying (UFS) or Unweighted Packet Spraying (UPS)
 			if (ndatapack_ % flowcellSizePkts_ == 0){
 				linkID_ = (linkID_ + 1) % numUplinks; //linkID_++; //if (linkID_ > failedLink_) linkID_ = 0;
@@ -1075,346 +1351,352 @@ void TcpAgent::output(int seqno, int reason)
 			if(realisticFailure_) {
 				if(roundRobin_) {
 					if(failureDetected_) {
-						if(failureCase_==1) { // partial failure
-							if(selectiveSpraying_) { // HPO, SPS or SPPS
-								if(DA_Flow_ && multipleFailure_) { /* The case of a DA spine flow which is also FFL or 2FL, or perhaps not from either */
-									// I don't think we need to handle DASO here, since DASO will not have flows assigned to DA spine
-									if(dynamicMapping_ && (ndatabytes_ > dynamicMappingThresholdGL2GL_)) {
-										DA_Flow_ = 0; // this is no longer a DA flow, now make it a healthy links flow
-										linkID_ = (linkID_ + 1) % numUplinks; // go to the next port
+						if(selectiveSpraying_ && (numFailures_ > 1) && (ndatapack_ % flowcellSizePkts_ == 0)) {
+							//if(selectiveSpraying_ && multipleFailure_ && (ndatapack_ % flowcellSizePkts_ == 0)) {
+							// Have to cater to SAPS, SAPS-DAU (DA_sprayOnly_==1), and HPO (healthyPathOnly_==1)
 
-										/* For later: We may need to incorporate more variables (threshold-type) to decide whether DA spines are actually DA at all? */
-										for(int i=linkID_; i < (linkID_ + numUplinks); i++) {
-											int spineIsFine=1;
-											int port = i % numUplinks;
-											for(int j=0; j<numFailures_; j++) {
-												//if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && i==failedLinkSpines[j]) {
-												if(port==failedLinkSpines[j]) {
-													spineIsFine=0;
-													break;
-												}
-											}
-											if(spineIsFine) {
-												linkID_ = port;
-												break;
-											}
-										}
-									} else { // DA Flow, either not dynamic mapping, or dynamic but still within the threshold
-										if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) {
-											if((numFailures_ - numDirectFailures_)!=1) { // no need to change the linkID_ value if this value is 1
-												// loop by starting at the next linkID_ across all uplinks, and search for the next spine that is not directly failed
-												int port = (linkID_ + 1) % numUplinks;
-												int foundNextDASpine = 0;
-												for(int i = port; i < (port + numUplinks); i++) {
-													for(int j=0; j < numFailures_ ; j++) {
-														if((i % numUplinks)==failedLinkSpines[j]) {
-															if(failedLinkLeafs[j]!=srcLeaf_ && failedLinkLeafs[j]!=destLeaf_) {
-																linkID_ = i % numUplinks;
-																foundNextDASpine = 1;
-																break;
-															}
-														}
-													}
-													if(foundNextDASpine) {
-														break;
-													}
-												}
-											}
-										}
-									}
-								} else if(poorPathFlow_) { // SPS or SPPS (Poor or Less-Used_Path) flow
-									if(dynamicMapping_) {
-										int thresh = 0;
-										if(fromFailedLeaf_ || toFailedLeaf_) {
-											thresh = dynamicMappingThreshold_;
-										} else {
-											thresh = dynamicMappingThresholdGL2GL_;
-										}
-										if(ndatabytes_ > thresh) {
-//if( ((fromFailedLeaf_ || toFailedLeaf_) && (ndatabytes_ > dynamicMappingThreshold_)) || ((!fromFailedLeaf_ && !toFailedLeaf_) && (ndatabytes_ > (100*dynamicMappingThreshold_)))) {
-											poorPathFlow_ = 0; // remap poor link flows towards flows that are sprayed
+							// TODO: Remapping if we have new incoming DA-causing traffic, or if it ceases to exist
 
-											linkID_ = (linkID_ + 1) % numUplinks; // this executes for both multi (as default case) and single failure
-											if(multipleFailure_) {
-												/* We may need to incorporate more variables (threshold-type) to decide whether DA spines are actually DA at all? */
-												for(int i=0; i < numUplinks; i++) {
-													int spineIsFine=1;
-													for(int j=0; j<numFailures_; j++) {
-														//if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && i==failedLinkSpines[j]) {
-														if(i==failedLinkSpines[j]) {
-															spineIsFine=0;
-															break;
-														}
-													}
-													if(spineIsFine) {
-														linkID_ = i;
-														break;
-													}
-												}
-											} else {												
-												if(linkID_ == failedLinkIndex_) {
-													linkID_ = (linkID_ + 1) % numUplinks;
-												}
-											}
-										} else { // this is the poor path flow, continuing on its path
-											if(multipleFailure_) { // This should work, if no new spine found, it will use old linkID_ value as before
-												if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) { // toggle between weak spines...
-													for(int j=0; j<numFailures_; j++) { // toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
-														if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j] != linkID_) {
-															linkID_ = failedLinkSpines[j];
-															break;
-														}
-													}
-												}
-											} else {
-												linkID_ = failedLinkIndex_; // works for both multi and single failure...
-											}
-										}
-									} else { // not dynamic mapping (but still PoorPath chosen)
-										if(multipleFailure_) { // This should work, if no new spine found, it will use old linkID_ value as before
-											if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) { // toggle between weak spines...
-												for(int j=0; j<numFailures_; j++) { // toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
-													if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j] != linkID_) {
-														linkID_ = failedLinkSpines[j];
-														break;
-													}
-												}
-											}
-										} else {
-											linkID_ = failedLinkIndex_;
-										}
-									}
-								} else { // not a Poor (or Less-Used) Path Flow :: SPS, SPPS, SPPS-DASO or maybe HPO
-									if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) {
-										linkID_ = (linkID_ + 1) % numUplinks;
-										if(multipleFailure_) { // Have to toggle onto next healthy spine ..  // && flowFacingMultipleFailures_
-											for(int i = linkID_; i < (numUplinks + linkID_); i++) {
-												int spineIsFine=1;
-												int spine = i % numUplinks;
-												for(int j=0; j<numFailures_; j++) {
-													if(spine==failedLinkSpines[j]) { 
-														if(healthyPathOnly_==0 && DA_sprayOnly_==0) { 
-															spineIsFine=0; // Plain SPPS: stricter, not allow spray over DA-affected spines
-															break;
-														} else if(failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_){
-															spineIsFine=0; // case of either SPPS-DASO or HPO .. less scrutiny
-															break;
-														} else { /* nothing here*/ }
-													}
-												}
-												if(spineIsFine) {
-													linkID_ = spine;
-													break;
-												}
-											}
-										} else {											
-											if(linkID_ == failedLinkIndex_) { 
-												if((healthyPathOnly_==0 && DA_sprayOnly_==0) || (fromFailedLeaf_ || toFailedLeaf_)) {
-													//if((fromFailedLeaf_ || toFailedLeaf_)) { // commented on 24-June-16, since now we r doing this for all flows
-													linkID_ = (linkID_ + 1) % numUplinks; // Should not run for HPO GL to GL flows
-													//}
-												}
-											}
-										}
+							// if a flow is mapped to a direct or indirect(DA) failure link, if it has crossed the relevant threshold, remap it
+							if(dynamicMapping_ && (svtMapping==1 || svtMapping==11 || svtMapping==12)) {
+								if(svtMapping==1 && (ndatabytes_ > dynamicMappingThreshold_)) {
+									if(DA_sprayOnly_==1) { // SAPS-DAU, remap from 1 to 0
+										svtMapping = 0;
+									} else { // SAPS, remap from 1 to 10
+										svtMapping = 10;
+									}									
+								} else {
+									if((svtMapping==11 || svtMapping==12) && (ndatabytes_ > dynamicMappingThresholdGL2GL_)) {
+										svtMapping = 10; // this can only be SAPS, not SAPS-DAU
 									}
 								}
-							} else { // WPS/WFS
 
-								// #CheckingWFCS working code here
-								if(ndatapack_ % flowcellSizePkts_ == 0) { // should we add the clause ndatapack_ > 0 ?? asking on 30-March
-									if(multipleFailure_) { // Have to toggle onto next spine .. if healthy, OK, if not, check if time has come...
-#ifdef debug_tcp_smi
-										printf("DEBUG-Multiple Failures: Inside FailureCase==1!! numUplinks=%d flowCellMod_=%d \n", numUplinks, flowCellMod_);
-										printf("toggle-Weak-Spines=%d, numDirectFailures_=%d ndatapack_=%d \n", toggleWeakSpines_, numDirectFailures_, (int) ndatapack_);
-#endif
-										//// NEW LOGIC
-										linkID_ = (linkID_ + 1) % numUplinks; // go to next link...
+							}							
+							nextValidLink(); // toggle to the next valid link in the respective svt
 
-										if(numDirectFailures_ > 0) {
-											for(int i = linkID_; i < (numUplinks + linkID_); i++) {
-												int spineIsFine=1;
-												int spine = i % numUplinks;
-												for(int j=0; j<numFailures_; j++) {
-													if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && spine==failedLinkSpines[j]) {
-														spineIsFine=0;
-														break;
-													}
-												}
+						} else {
 
-												if((ndatapack_ % flowCellMod_ == 0) && (ndatapack_ > 0) || toggleWeakSpines_) {
-													if(spineIsFine==0) { // assign first weak spine now
-														linkID_ = spine;
-														if(++toggleWeakSpines_ == numDirectFailures_) {
-															toggleWeakSpines_ = 0;
-															flowCellMod_ = flowCellMod_ + (flowcellSizePkts_ * numDirectFailures_) + (flowcellSizePkts_ * rfactor);
-														}
-														break;
-													}
-												} else {
-													if(spineIsFine) {
-														linkID_ = spine;
-														break;
-													}
-												}
-											}
-										}
-										/// END of NEW LOGIC
+							if(failureCase_==1) { // partial failure
+								if(selectiveSpraying_) { // HPO, SPS or SPPS
+									if(DA_Flow_ && (numFailures_ > 1)) { /* The case of a DA spine flow which is also FFL or 2FL, or perhaps not from either */
+									//if(DA_Flow_ && multipleFailure_) {
+										// // I don't think we need to handle DASO here, since DASO will not have flows assigned to DA spine
+										// if(dynamicMapping_ && (ndatabytes_ > dynamicMappingThresholdGL2GL_)) {
+										// 	DA_Flow_ = 0; // this is no longer a DA flow, now make it a healthy links flow
+										// 	linkID_ = (linkID_ + 1) % numUplinks; // go to the next port
 
-										/*
-										if(ndatapack_ % flowCellMod_ == 0 && ndatapack_ > 0) { // assign first weak spine now
-											for(int j=0; j<numFailures_; j++) {
-												if(failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_)  {
-													linkID_ = failedLinkSpines[j];
-													break;
-												}
-											}
-											toggleWeakSpines_++;
-										} else if(toggleWeakSpines_) { // perhaps toggle to the next weak spine if...
-											// TODO: search for next weak spine in order....
-											for(int j=0; j<numFailures_; j++) {
-												if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j]!=linkID_)  {
-													linkID_ = failedLinkSpines[j];
-													break;
-												}
-											}
-
-											if(toggleWeakSpines_+1 == numDirectFailures_) {
-												toggleWeakSpines_ = 0;
-												flowCellMod_ = flowCellMod_ + (flowcellSizePkts_ * numDirectFailures_) + (flowcellSizePkts_ * rfactor);
-											}
-										} else { // look for next good spine
-											linkID_ = (linkID_ + 1) % numUplinks; // go to next link...
-											for(int i = linkID_; i < (numUplinks + linkID_); i++) {
-												int spineIsFine=1;
-												int spine = i % numUplinks;
-												for(int j=0; j<numFailures_; j++) {
-													if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && spine==failedLinkSpines[j]) {
-														spineIsFine=0;
-														break;
-													}
-												}
-												if(spineIsFine) {
-													linkID_ = spine;
-													break;
-												}
-											}
-										}
-										*/
-
-										// int searchForNewSpine = 1;
-										// while(searchForNewSpine) {
-										// 	searchForNewSpine = 0;
-										// 	for(int j=0; j<numFailures_; j++) {
-										// 		if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && linkID_==failedLinkSpines[j]) {
-										// 			// new linkID_ is failed... if time has come, its OK, if not, then search for next good spine...
-										// 				if(ndatapack_ % flowCellMod_ != 0) { // not turn of failed link as yet, look for healthy spine 
-										// 					if(toggleWeakSpines_ > 0 && toggleWeakSpines_ < numDirectFailures_) {
-										// 						// search for the next weak link...
-										// 					} else {
-										// 						linkID_ = (linkID_ + 1) % numUplinks;
-										// 						searchForNewSpine = 1;
-										// 						break;
-										// 					}
-										// 				} else { 
-										// 					// KAKA
-										// 					toggleWeakSpines_++;
-										// 					// maybe use toggleWeakSpines to toggle between the weak spines if we have numDirectFailures_ > 1 
-										// 					flowCellMod_ = flowCellMod_ + (flowcellSizePkts_ * numDirectFailures_) + (flowcellSizePkts_ * rfactor); 
-										// 				}
+										// 	/* For later: We may need to incorporate more variables (threshold-type) to decide whether DA spines are actually DA at all? */
+										// 	for(int i=linkID_; i < (linkID_ + numUplinks); i++) {
+										// 		int spineIsFine=1;
+										// 		int port = i % numUplinks;
+										// 		for(int j=0; j<numFailures_; j++) {
+										// 			//if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && i==failedLinkSpines[j]) {
+										// 			if(port==failedLinkSpines[j]) {
+										// 				spineIsFine=0;
 										// 				break;
-
+										// 			}
+										// 		}
+										// 		if(spineIsFine) {
+										// 			linkID_ = port;
+										// 			break;
+										// 		}
+										// 	}
+										// } else { // DA Flow, either not dynamic mapping, or dynamic but still within the threshold
+										// 	if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) {
+										// 		if((numFailures_ - numDirectFailures_)!=1) { // no need to change the linkID_ value if this value is 1
+										// 			// loop by starting at the next linkID_ across all uplinks, and search for the next spine that is not directly failed
+										// 			int port = (linkID_ + 1) % numUplinks;
+										// 			int foundNextDASpine = 0;
+										// 			for(int i = port; i < (port + numUplinks); i++) {
+										// 				for(int j=0; j < numFailures_ ; j++) {
+										// 					if((i % numUplinks)==failedLinkSpines[j]) {
+										// 						if(failedLinkLeafs[j]!=srcLeaf_ && failedLinkLeafs[j]!=destLeaf_) {
+										// 							linkID_ = i % numUplinks;
+										// 							foundNextDASpine = 1;
+										// 							break;
+										// 						}
+										// 					}
+										// 				}
+										// 				if(foundNextDASpine) {
+										// 					break;
+										// 				}
+										// 			}
 										// 		}
 										// 	}
 										// }
-
-									} else { // single failure case
-										linkID_ = (linkID_ + 1) % numUplinks; //
-										if(linkID_ == failedLinkIndex_ && (fromFailedLeaf_ || toFailedLeaf_)) {
-											if(ndatapack_ % flowCellMod_ != 0) {
-												linkID_ = (linkID_ + 1) % numUplinks; //											
+									} else if(poorPathFlow_) { // SPS or SPPS (Poor or Less-Used_Path) flow
+										if(dynamicMapping_) {
+											int thresh = 0;
+											if(fromFailedLeaf_ || toFailedLeaf_) {
+												thresh = dynamicMappingThreshold_;
 											} else {
-												flowCellMod_ = flowCellMod_ + flowcellSizePkts_ + (flowcellSizePkts_ * rfactor);
+												thresh = dynamicMappingThresholdGL2GL_;
+											}
+											if(ndatabytes_ > thresh) {
+												//if( ((fromFailedLeaf_ || toFailedLeaf_) && (ndatabytes_ > dynamicMappingThreshold_)) || ((!fromFailedLeaf_ && !toFailedLeaf_) && (ndatabytes_ > (100*dynamicMappingThreshold_)))) {
+												poorPathFlow_ = 0; // remap poor link flows towards flows that are sprayed
+
+												linkID_ = (linkID_ + 1) % numUplinks; // this executes for both multi (as default case) and single failure
+												if(numFailures_ > 1) {
+													//if(multipleFailure_) { commented 9-Jul-17
+													// /* We may need to incorporate more variables (threshold-type) to decide whether DA spines are actually DA at all? */
+													// for(int i=0; i < numUplinks; i++) {
+													// 	int spineIsFine=1;
+													// 	for(int j=0; j<numFailures_; j++) {
+													// 		//if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && i==failedLinkSpines[j]) {
+													// 		if(i==failedLinkSpines[j]) {
+													// 			spineIsFine=0;
+													// 			break;
+													// 		}
+													// 	}
+													// 	if(spineIsFine) {
+													// 		linkID_ = i;
+													// 		break;
+													// 	}
+													// }
+												} else {												
+													if(linkID_ == failedLinks[0].spine) {
+														linkID_ = (linkID_ + 1) % numUplinks;
+													}
+												}
+											} else { // this is the poor path flow, continuing on its path
+												if(numFailures_ > 1) {
+													//if(multipleFailure_) { // This should work, if no new spine found, it will use old linkID_ value as before
+													// if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) { // toggle between weak spines...
+													// 	for(int j=0; j<numFailures_; j++) { // toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
+													// 		if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j] != linkID_) {
+													// 			linkID_ = failedLinkSpines[j];
+													// 			break;
+													// 		}
+													// 	}
+													// }
+												} else {
+													linkID_ = failedLinks[0].spine;
+													//linkID_ = failedLinkIndex_; // works for both multi and single failure... Commented 9-Jul-17
+												}
+											}
+										} else { // not dynamic mapping (but still PoorPath chosen)
+											if(numFailures_ > 1) {
+												//if(multipleFailure_) { // This should work, if no new spine found, it will use old linkID_ value as before
+												// if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) { // toggle between weak spines...
+												// 	for(int j=0; j<numFailures_; j++) { // toggleWeakSpines_ = (toggleWeakSpines_ + 1) % numFailures_;
+												// 		if((failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_) && failedLinkSpines[j] != linkID_) {
+												// 			linkID_ = failedLinkSpines[j];
+												// 			break;
+												// 		}
+												// 	}
+												// }
+											} else {
+												linkID_ = failedLinks[0].spine;
+												// linkID_ = failedLinkIndex_; Commented 9-Jul-17
+											}
+										}
+									} else { // not a Poor (or Less-Used) Path Flow :: SPS, SPPS, SPPS-DASO or maybe HPO
+										if (ndatapack_ % flowcellSizePkts_ == 0 && ndatapack_ > 0) {
+											linkID_ = (linkID_ + 1) % numUplinks;
+											if(numFailures_ > 1) {
+												// if(multipleFailure_) { // Have to toggle onto next healthy spine ..  // Commented 9-Jul-17
+												// for(int i = linkID_; i < (numUplinks + linkID_); i++) {
+												// 	int spineIsFine=1;
+												// 	int spine = i % numUplinks;
+												// 	for(int j=0; j<numFailures_; j++) {
+												// 		if(spine==failedLinkSpines[j]) { 
+												// 			if(healthyPathOnly_==0 && DA_sprayOnly_==0) { 
+												// 				spineIsFine=0; // Plain SPPS: stricter, not allow spray over DA-affected spines
+												// 				break;
+												// 			} else if(failedLinkLeafs[j]==srcLeaf_ || failedLinkLeafs[j]==destLeaf_){
+												// 				spineIsFine=0; // case of either SPPS-DASO or HPO .. less scrutiny
+												// 				break;
+												// 			} else { /* nothing here*/ }
+												// 		}
+												// 	}
+												// 	if(spineIsFine) {
+												// 		linkID_ = spine;
+												// 		break;
+												// 	}
+												// }
+											} else {	
+												if(linkID_ == failedLinks[0].spine) {
+													//if(linkID_ == failedLinkIndex_) { Commented 9-Jul-17
+													if((healthyPathOnly_==0 && DA_sprayOnly_==0) || (fromFailedLeaf_ || toFailedLeaf_)) {
+														//if((fromFailedLeaf_ || toFailedLeaf_)) { // commented on 24-June-16, since now we r doing this for all flows
+														linkID_ = (linkID_ + 1) % numUplinks; // Should not run for HPO GL to GL flows
+														//}
+													}
+												}
+											}
+										}
+									}
+								} else { // WPS/WFS
+									// #CheckingWFCS working code here
+									if(ndatapack_ % flowcellSizePkts_ == 0) { // should we add the clause ndatapack_ > 0 ?? asking on 30-March
+										if(numFailures_ > 1) {
+											//if(multipleFailure_) { // Have to toggle onto next spine .. if healthy, OK, if not, check if time has come...
+											if(debug_tcp_smi) {
+												printf("DEBUG-Multiple Failures: Inside FailureCase==1!! numUplinks=%d flowCellMod_=%d \t", numUplinks, flowCellMod_);
+												printf("toggle-Weak-Spines=%d, numDirectFailures_=%d ndatapack_=%d \n", toggleWeakSpines_, numDirectFailures_, (int) ndatapack_);
+											}
+											//// NEW LOGIC
+											linkID_ = (linkID_ + 1) % numUplinks; // go to next link...
+
+											if(numDirectFailures_ > 0) {
+												int allChecksCleared = 0;
+												int i = 0;
+												while(allChecksCleared==0 && i < numUplinks) {
+													int is_SpineFailed = isSpineFailed(linkID_); // (0 for not failed, 1 for partial, 2 for full failure	
+													if(debug_tcp_smi) {
+														printf("inside While Loop for all-checks-cleared ! \t");
+														printf("for spine i=%d is_SpineFailed=%d \n", i, is_SpineFailed);
+													}
+													if(is_SpineFailed==2) {
+														linkID_ = (linkID_ + 1) % numUplinks; // check next spine, this one is fully failed
+													} else if(is_SpineFailed==1) { // partial failure spine ...
+														if((ndatapack_ % flowCellMod_ == 0 && ndatapack_ > 0) || toggleWeakSpines_) {
+															if(++toggleWeakSpines_ >= numDirectPartialFailurePaths) {
+																// reset toggleWeakSpines_ and resize flowCellMod_
+																toggleWeakSpines_ = 0;
+																int pktsSentWeakPaths = flowcellSizePkts_ * numDirectPartialFailurePaths;
+																int pktsSentHealthyPaths = flowcellSizePkts_ * rfactor;
+																flowCellMod_ +=  pktsSentWeakPaths + pktsSentHealthyPaths;
+															}
+															allChecksCleared = 1; // if time has come for weak spine, then allow it
+														} else {
+															linkID_ = (linkID_ + 1) % numUplinks; // check next spine, since it's the turn of healthy spines
+														}
+													} else { // healthy spine ... 
+														if((ndatapack_ % flowCellMod_ == 0 && ndatapack_ > 0) || toggleWeakSpines_) {
+															linkID_ = (linkID_ + 1) % numUplinks; // turn of weak(er) spines
+														} else {
+															allChecksCleared = 1; // all OK
+														}
+													}
+													i++;
+												}
+											}
+
+											// if(numDirectFailures_ > 0) {
+											// 	for(int i = linkID_; i < (numUplinks + linkID_); i++) {
+											// 		if(numDirectPartialFailurePaths > 0) {
+
+											// 			// PROBLEM NEEDS FIXING -- 12-jul-2017
+											// 			if((ndatapack_ % flowCellMod_ == 0) || toggleWeakSpines_) {
+											// 				if(spineIsFine==0) { // assign first weak spine now
+											// 					linkID_ = spine;
+											// 					if(++toggleWeakSpines_ >= numDirectPartialFailurePaths) {
+											// 						//if(++toggleWeakSpines_ == numDirectFailures_) {
+											// 						toggleWeakSpines_ = 0;
+											// 						int pktsSentWeakPaths = flowcellSizePkts_ * numDirectPartialFailurePaths;
+											// 						int pktsSentHealthyPaths = flowcellSizePkts_ * rfactor;
+											// 						flowCellMod_ +=  pktsSentWeakPaths + pktsSentHealthyPaths;
+											// 						//flowCellMod_ = flowCellMod_ + (flowcellSizePkts_ * numDirectFailures_) + (flowcellSizePkts_ * rfactor);
+											// 					}
+											// 					break;
+											// 				} // if spineIsFine==-1, its a full failure, if ==1, its a good spine... iterate to next uplink
+											// 			} else {
+											// 				if(spineIsFine==1) {
+											// 					linkID_ = spine;
+											// 					break;
+											// 				} // if spineIsFine==-1, its a full failure, if its ==0, its a partial failure, iterate to next uplink
+											// 			}
+
+
+											// 		} else {
+											// 			if(spineIsFine==1) {
+											// 				linkID_ = spine;
+											// 				break;
+											// 			} // if spineIsFine==-1, its a full failure, if its ==0, its a partial failure, iterate to next uplink
+											// 		}
+
+
+											// 	}
+											// }
+										} else { // single failure case
+											linkID_ = (linkID_ + 1) % numUplinks; //
+											if(linkID_ == failedLinks[0].spine && (fromFailedLeaf_ || toFailedLeaf_)) {
+												//if(linkID_ == failedLinkIndex_ && (fromFailedLeaf_ || toFailedLeaf_)) {
+												if((ndatapack_ % flowCellMod_ != 0) || failedLinks[0].failureRatio==100) {
+													linkID_ = (linkID_ + 1) % numUplinks; //									
+												} else {
+													flowCellMod_ = flowCellMod_ + flowcellSizePkts_ + (flowcellSizePkts_ * rfactor);
+												}
 											}
 										}
 									}
 								}
-							}
-						} else if(failureCase_==2) { // full failure
+							} else if(failureCase_==2) { // full failure
 
-// KAKA LEFT IT HERE... FIX UP STUFF NOW... // numDirectFailures_
-// Currently multiple failures not implemented for full link failure case...
-#ifdef debug_tcp_smi
-							printf("DEBUG-0: Inside FailureCase==2!! \n");
-#endif
-							if(selectiveSpraying_) { // HPO or SPS
-								if(poorPathFlow_) { // this can only be a GL to GL flow, 
-									linkID_ = failedLinkIndex_;
+								// KAKA: Currently multiple failures not implemented for full link failure case...
+								if(debug_tcp_smi) {
+									printf("DEBUG-0: Inside FailureCase==2!! \n");
+								}
+								if(selectiveSpraying_) { // HPO or SPS
+									if(poorPathFlow_) { // this can only be a GL to GL flow, 
+										linkID_ = failedLinks[0].spine;
+										//linkID_ = failedLinkIndex_;
 
-									if(dynamicMapping_ && (ndatabytes_ > dynamicMappingThresholdGL2GL_)) { // Symmetric Path with Dynamic Mapping
-										// TODO: Might need to remap long flows, but at a larger threshold perhaps (June-24-2016) SMI
-										poorPathFlow_ = 0; // remap towards flows that are sprayed
-										linkID_ = (linkID_ + 1) % numUplinks;
-										if(linkID_ == failedLinkIndex_) {
+										if(dynamicMapping_ && (ndatabytes_ > dynamicMappingThresholdGL2GL_)) { // Symmetric Path with Dynamic Mapping
+											// TODO: Might need to remap long flows, but at a larger threshold perhaps (June-24-2016) SMI
+											poorPathFlow_ = 0; // remap towards flows that are sprayed
 											linkID_ = (linkID_ + 1) % numUplinks;
+											if(linkID_ == failedLinks[0].spine) {
+												//if(linkID_ == failedLinkIndex_) {
+												linkID_ = (linkID_ + 1) % numUplinks;
+											}
+										}
+									} else {
+										if(debug_tcp_smi) {
+											printf("ndatapack_=%d; flowcellSizePkts_=%d  \t", (int) ndatapack_, flowcellSizePkts_);
+											printf("fromFL=%d; toFL=%d; HPO=%d; DASO=%d \n", fromFailedLeaf_, toFailedLeaf_, healthyPathOnly_, DA_sprayOnly_);
+										}
+										if (ndatapack_ % flowcellSizePkts_ == 0) {
+											linkID_ = (linkID_ + 1) % numUplinks; //
+											if(linkID_ == failedLinks[0].spine) {
+												//if(linkID_ == failedLinkIndex_) {
+												if((healthyPathOnly_==0 && DA_sprayOnly_==0) || (fromFailedLeaf_ || toFailedLeaf_)) {
+													linkID_ = (linkID_ + 1) % numUplinks; // This line should not execute for HPO GL-to-GL flows
+												}
+											}
 										}
 									}
-								} else {
-#ifdef debug_tcp_smi
-									printf("ndatapack_=%d; flowcellSizePkts_=%d  \t", (int) ndatapack_, flowcellSizePkts_);
-									printf("fromFL=%d; toFL=%d; HPO=%d; DASO=%d \n", fromFailedLeaf_, toFailedLeaf_, healthyPathOnly_, DA_sprayOnly_);
-#endif
+								} else { // WPS, WFCS ??
 									if (ndatapack_ % flowcellSizePkts_ == 0) {
 										linkID_ = (linkID_ + 1) % numUplinks; //
-										if(linkID_ == failedLinkIndex_) {
-											if((healthyPathOnly_==0 && DA_sprayOnly_==0) || (fromFailedLeaf_ || toFailedLeaf_)) {
-												linkID_ = (linkID_ + 1) % numUplinks; // This line should not execute for HPO GL-to-GL flows
+										if(linkID_ == failedLinks[0].spine) {
+											//if(linkID_ == failedLinkIndex_) {
+											if(fromFailedLeaf_ || toFailedLeaf_) {
+												linkID_ = (linkID_ + 1) % numUplinks; //
 											}
 										}
 									}
-								}
-							} else { // WPS, WFCS ??
-								if (ndatapack_ % flowcellSizePkts_ == 0) {
-									linkID_ = (linkID_ + 1) % numUplinks; //
-									if(linkID_ == failedLinkIndex_) {
-										if(fromFailedLeaf_ || toFailedLeaf_) {
-											linkID_ = (linkID_ + 1) % numUplinks; //
-										}
+								}						
+							} else {
+								// no failure TODO:SMI 24-June
+								if(! selectiveSpraying_) { // handle the case for no failure and scheme is either WFCS or WPS (29 July 2016)
+									if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
+										linkID_ = (linkID_ + 1) % numUplinks; // treat WPS/WFS like UPS/UFS
 									}
-								}
-							}						
-						} else {
-							// no failure TODO:SMI 24-June
-							if(! selectiveSpraying_) { // handle the case for no failure and scheme is either WFCS or WPS (29 July 2016)
-								if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
-									linkID_ = (linkID_ + 1) % numUplinks; // treat WPS/WFS like UPS/UFS
 								}
 							}
 						}
 					} else { // dynamic failure currently not detected
-#ifdef debug_tcp_smi
-						printf("DEBUG-TCP: Dynamic Failure Currently Not Detected at Time=%f \t ", time_now);
-#endif
-						//if(! selectiveSpraying_) {
-#ifdef debug_tcp_smi
-							printf("Treating WFCS like UFCS!! flowcellSizePkts_=%d \t", flowcellSizePkts_);
-#endif
-							if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
-								linkID_ = (linkID_ + 1) % numUplinks; // treat WPS/WFS like UPS/UFS
+						if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
+							linkID_ = (linkID_ + 1) % numUplinks; // treat WPS/WFS like UPS/UFS
+						}
+
+						if(debug_tcp_smi) {
+							printf("DEBUG-TCP: Dynamic Failure Currently Not Detected at Time=%f \t ", time_now);
+							if(! selectiveSpraying_) {
+								printf("Treating WFCS like UFCS!! flowcellSizePkts_=%d linkID_=%d \n", flowcellSizePkts_, linkID_);
 							}
-					        //} // can leave HPPS/SPPS since they will act like RPS in Classifier-MultiPath
-
-#ifdef debug_tcp_smi
-						printf("linkID_=%d \n ", linkID_);
-#endif
-
+						}
 					}
 				} else { // Probabilistics Schemes ... WPS-P, WFCS-P
 					if(failureDetected_) {
 						if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
 							int randomNumber = Random::integer(totalUplinkWeights);
-#ifdef debug_tcp_smi
-							printf("SMI-TEST: Probabilistic spraying -> randomNumber = %d \n", randomNumber);
-#endif
+							if( debug_tcp_smi) {
+								printf("SMI-TEST: Probabilistic spraying -> randomNumber = %d \n", randomNumber);
+							}
 							int counter = 0, weightsAdded = 0;
 							linkID_ = -1; 
 
@@ -1430,9 +1712,9 @@ void TcpAgent::output(int seqno, int reason)
 							if(linkID_ < 0) { // Just a check to make sure we have chosen a valid port
 								linkID_ = Random::integer(numUplinks);
 							}
-#ifdef debug_tcp_smi
-							printf("SMI-TEST: linkID_=%d flowID=%d flowcellNum=%d ndatapack_=%d \n",linkID_, int(fid_), (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
-#endif
+							if(debug_tcp_smi) {
+								printf("SMI-TEST: linkID_=%d flowID=%d flowcellNum=%d ndatapack_=%d \n",linkID_, int(fid_), (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
+							}
 						}
 					} else {
 						if (ndatapack_ % flowcellSizePkts_ == 0){
@@ -1448,33 +1730,34 @@ void TcpAgent::output(int seqno, int reason)
 						if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
 							linkID_ = (linkID_ + 1) % numUplinks;
 				
-							if(linkID_ == failedLinkIndex_) {
-#ifdef debug_tcp_smi
-								printf("DEBUG: New flowcell, on failed link! ndatapack=%d flowCellMod=%d rfactor=%d ! \n", (int)ndatapack_, flowCellMod_, rfactor);
-#endif
+							if(linkID_ == failedLinks[0].spine) {
+								//if(linkID_ == failedLinkIndex_) {
+								if(debug_tcp_smi) {
+									printf("DEBUG: New flowcell, on failed link! ndatapack=%d flowCellMod=%d rfactor=%d ! \n", (int)ndatapack_, flowCellMod_, rfactor);
+								}
 								if ((selectiveSpraying_ && (fromFailedLeaf_ || toFailedLeaf_) && poorPathFlow_==0) || (ndatapack_ % flowCellMod_ != 0)){
 									linkID_ = (linkID_ + 1) % numUplinks;
 								} else {
-#ifdef debug_tcp_smi
-									printf("DEBUG: Before: flowCellMod_ = % d ", flowCellMod_);
-#endif
+									if(debug_tcp_smi) {
+										printf("DEBUG: Before: flowCellMod_ = % d ", flowCellMod_);
+									}
 									flowCellMod_ = flowCellMod_ + flowcellSizePkts_ + (flowcellSizePkts_ * rfactor);
-#ifdef debug_tcp_smi
-									printf("After: flowCellMod_ = % d \n", flowCellMod_);
-#endif
+									if(debug_tcp_smi) {
+										printf("After: flowCellMod_ = % d \n", flowCellMod_);
+									}
 								}
 							}
-#ifdef debug_tcp_smi
-							printf("Debug: flowID = %d Link = %d ndatapack_ = %d\n",int(fid_), linkID_, (int)ndatapack_);
-#endif
+							if(debug_tcp_smi) {
+								printf("Debug: flowID = %d Link = %d ndatapack_ = %d\n",int(fid_), linkID_, (int)ndatapack_);
+							}
 						}
 					}
 				} else { // Probabilistic Spraying
 					if (ndatapack_ % flowcellSizePkts_ == 0){ // indicates the start of a new flowcell
 						int randomNumber = Random::integer(totalUplinkWeights);
-#ifdef debug_tcp_smi
-						printf("SMI-TEST: Probabilistic spraying -> randomNumber = %d \n", randomNumber);
-#endif
+						if(debug_tcp_smi) {
+							printf("SMI-TEST: Probabilistic spraying -> randomNumber = %d \n", randomNumber);
+						}
 						int counter = 0, weightsAdded = 0;
 						linkID_ = -1; 
 
@@ -1490,9 +1773,9 @@ void TcpAgent::output(int seqno, int reason)
 						if(linkID_ < 0) { // Just a check to make sure we have chosen a valid port
 							linkID_ = Random::integer(numUplinks);
 						}
-#ifdef debug_tcp_smi
-						printf("SMI-TEST: linkID_=%d flowID=%d flowcellNum=%d ndatapack_=%d \n",linkID_, int(fid_), (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
-#endif
+						if(debug_tcp_smi) {
+							printf("SMI-TEST: linkID_=%d flowID=%d flowcellNum=%d ndatapack_=%d \n",linkID_, int(fid_), (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
+						}
 					}
 				}
 			}
@@ -1501,11 +1784,42 @@ void TcpAgent::output(int seqno, int reason)
 		hf->flowcellUplink_ = linkID_ ; // LB decision for this flowcell : SMI [15-Dec-2015]
 		hf->flowcellSeq_ = ndatapack_ / flowcellSizePkts_; // Flowcell number in flow.
 
-#ifdef debug_tcp_smi
-		printf("tcph->linkID=%d Flow-ID=%d flowcellNum=%d ndatapack_=%d \n", tcph->linkID, (int) fid_, (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
-#endif
+		if(debug_tcp_smi) {
+			printf("tcph->linkID=%d Flow-ID=%d flowcellNum=%d ndatapack_=%d \n", tcph->linkID, (int) fid_, (int) ndatapack_ / flowcellSizePkts_ , (int)ndatapack_);
+		}
 
+	} else {
+		if(debug_tcp_smi) {
+			printf("Either ECMP or FlowBender! \n");
+		}
+
+		// if(flowBender_) {
+
+		// 	/*  When RTO occurs --> simply do:
+		// 	  (1) toggleTTL_++;
+		// 	  (2) perhaps we need to restart the flowbender timer and reset the (a) markedAckPkts_F , (b) totalAckPkts and perhaps the numRTTsCongested_
+		// 	 */
+
+		// 	// if(ndatapack_ % 50 == 0) {
+		// 	// 	printf("Toggle TTL value for FlowBender iph->ttl()=%d; toggleTTL_=%d rtt_timeout()=%f \n", iph->ttl(), toggleTTL_, rtt_timeout() * tcp_tick_);
+		// 	// 	toggleTTL_++;
+		// 	// }
+
+		// 	iph->ttl() = iph->ttl() + toggleTTL_;
+		// 	//#ifdef debug_tcp_smi
+		// 	printf("tcp:output() FLOWBENDER: Flow-ID=%d ndatapack_=%d iph->ttl()=%d \n", (int) fid_, (int)ndatapack_, iph->ttl());
+		// 	//#endif
+		// }
 	}
+
+	/*
+	  task for today: 9-july-2017
+	  failedLinks[flink].leaf; failedLinks[flink].spine; failedLinks[flink].failureRatio;
+	  USE VARS ABOVE EVERYWHERE, INSTEAD OF:->
+	  failedLinkLeafs[i], failedLinkSpines[i];
+	  failedLinkIndex_, failedLinkLeaf_;
+	  secondFailedLinkLeaf_, secondFailedLinkSpine_;
+	*/
 
 	tcph->ts() = Scheduler::instance().clock();
 	int is_retransmit = (seqno < maxseq_);
@@ -1552,6 +1866,11 @@ void TcpAgent::output(int seqno, int reason)
 	/* Check if this is the initial SYN packet. */
 	if (seqno == 0) {
 		if (syn_) {
+			/* SMI:: For FlowBender, we have to start the timer for checking congestion per RTT, and rerouting if N consecutive RTTs F exceeds T -- 6-Jul-17 */
+			if(flowBender_) {
+				// flowBender_N += Random::integer(2);
+				fl_bndr_timer.resched(rtt_timeout()); // * tcp_tick_ // SMI-Commented-jul25
+			}
 			databytes = 0;
 			if (maxseq_ == -1) { // Added by SMI: DCTCP?
 				curseq_ += 1; /*increment only on initial SYN*/
@@ -1682,9 +2001,72 @@ void TcpAgent::advanceby(int delta)
 }
 
 
+/*
+  This function is a helper function for deterministic WPS and WFCS, it helps in deciding whether the current chosen spine is failed (full/partial) or OK
+ */
+int TcpAgent::isSpineFailed(int spine) {
+	int spineFailed = 0; // 0 for not failed, 1 for partial, 2 for full failure
+
+	// if(fullFailureSpines[spine]==1) {
+	// 	spineFailed = 2;
+	// } else {
+	for(int j=0; j<numFailures_; j++) {
+		if((failedLinks[j].leaf==srcLeaf_ || failedLinks[j].leaf==destLeaf_) && spine==failedLinks[j].spine) {
+			if(failedLinks[j].failureRatio==100) {
+				spineFailed = 2;
+			} else {
+				spineFailed = 1;
+			}
+			break;
+		}
+	}
+	// }
+
+	return spineFailed;
+}
+
+/**
+    The aim of this function is to toggle to the next valid link within the SVT this flow has been mapped to
+ **/
+void TcpAgent::nextValidLink() {
+	linkID_ = (linkID_ + 1) % numUplinks;
+	if(svtMapping==0) {
+		while(svt_NoFailure[linkID_]==-1) {
+			linkID_ = (linkID_ + 1) % numUplinks;
+		}
+	} else if(svtMapping==1) { 
+		while(svt_partialFailure[linkID_]==-1) {
+			linkID_ = (linkID_ + 1) % numUplinks;
+		}
+	} else if(svtMapping==10) {
+		while(svt_DA_NoFailure[linkID_]==-1) {
+			linkID_ = (linkID_ + 1) % numUplinks;
+		}
+	} else if(svtMapping==11) {
+		while(svt_DA_partialFailure[linkID_]==-1) {
+			linkID_ = (linkID_ + 1) % numUplinks;
+		}
+	} else if(svtMapping==12) {
+		while(svt_DA_fullFailure[linkID_]==-1) {
+			linkID_ = (linkID_ + 1) % numUplinks;
+		}
+	} else {
+		// nothing else for now...
+	}
+
+}
+
 int TcpAgent::command(int argc, const char*const* argv)
 {
 	if (argc == 3) {
+		if (strcmp(argv[1], "failedlinks") == 0) {
+			//char* failedLinkSet = new char[100];
+			//Tcl_GetString(argv[2]);
+			//strcpy(failedLinkSet, argv[2]);
+			strcpy(allFailedLinks, argv[2]);
+			//printf("Failed Link Set = %s \n", allFailedLinks);
+			return (TCL_OK);
+		}
 		if (strcmp(argv[1], "advance") == 0) {
 			int newseq = atoi(argv[2]);
 			if (newseq > maxseq_)
@@ -2591,9 +2973,9 @@ void TcpAgent::spurious_timeout()
 {
 	frto_ = 0;
 
-#ifdef debug_tcp_smi
-	printf("Inside spurious_timeout()\n");
-#endif
+	if(debug_tcp_smi) {
+		printf("Inside spurious_timeout()\n");
+	}
 
 
 	switch (spurious_response_) {
@@ -2682,9 +3064,6 @@ void TcpAgent::recv(Packet *pkt, Handler*)
 		return;
 	}
 
-	dupCase1Count_ = hdr_flags::access(pkt)->dupCase1Count(); /* SMI: 15-June-2015 */
-	dupCase2Count_ = hdr_flags::access(pkt)->dupCase2Count(); /* SMI: 15-June-2015 */
-
 	++nackpack_;
 	ts_peer_ = tcph->ts();
 	int ecnecho = hdr_flags::access(pkt)->ecnecho();
@@ -2692,6 +3071,7 @@ void TcpAgent::recv(Packet *pkt, Handler*)
 		ecn(tcph->seqno());
 	recv_helper(pkt);
 	recv_frto_helper(pkt);
+
 	/* grow cwnd and check if the connection is done */ 
 	if (tcph->seqno() > last_ack_) {
 		recv_newack_helper(pkt);
@@ -2849,6 +3229,12 @@ void TcpAgent::tcp_eln(Packet *pkt)
 void TcpAgent::finish()
 {
 	Tcl::instance().evalf("%s done", this->name());
+}
+
+void FlowBenderTimer::expire(Event*)
+{
+	a_->timeout(TCP_FB_TIMER);
+	//a_->checkCongestionFB();
 }
 
 void RtxTimer::expire(Event*)

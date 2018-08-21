@@ -399,6 +399,7 @@ Classifier/MultiPath set flowcellSpraying_ 0 ; # Added on 12-Dec-15. SMI
 Classifier/MultiPath set selectiveSpraying_ 0 ; # 8-Mar-16. SMI
 Classifier/MultiPath set K_ 0; # Added on 8-May. SMI
 Classifier/MultiPath set failureCase_ 0; ## Added 31-jul-16
+Classifier/MultiPath set coresPerAgg 0; ## 25-Jul-17 // needed for FlowBender implementation on fat-tree
 
 #
 # FEC models
@@ -1047,7 +1048,7 @@ Agent/TCP set flowcellSizePkts_ 0; # What is the size of the flowcell in packets
 Agent/TCP set roundRobin_ 0; # Default is probabilistic spraying
 
 Agent/TCP set failureRatio_ 1;	  ## SMI 27-Dec-15
-Agent/TCP set failedLinkIndex_ 0; ## SMI 27-Dec-15
+#Agent/TCP set failedLinkIndex_ 0; ## SMI 27-Dec-15
 Agent/TCP set failureAware_ 0;	## Informs if it is FCS-(Failure Aware or Unaware)
 Agent/TCP set selectiveSpraying_ 0; ## This tell us if we are using Selective Path FS or PS
 Agent/TCP set poorPathFlow_ 0; ## This informs if this flow is meant for the poor path only
@@ -1060,6 +1061,8 @@ Agent/TCP set dynamicMappingThreshold_ 0; ## This informs us the value in bytes 
 Agent/TCP set dynamicMappingThresholdGL2GL_ 0; ## This informs us the value in bytes of the dynamic mapping threshold for SPS-DM, for GL to GL flows in particular
 
 Agent/TCP set flowBender_ 0; ## By default, we do not use flowbender -- 13-Jan-17
+Agent/TCP set flowBender_T 0.0; ## threshold fraction of marked ACK packets for FlowBender -- 3-Jul-17
+Agent/TCP set flowBender_N 1; ## Default, 1 RTT period to check if R exceeds T
 
 Agent/TCP set realisticFailure_ 0; ## SMI 8-Mar (If 0, static failure, if 1, dynamic failure)
 Agent/TCP set failureCase_ 0; ## SMI 8-Mar (0=no failure, 1=partial, 2=full failure)
@@ -1090,12 +1093,16 @@ Agent/TCP set dctcp_g_ 0.0625;
 ## Multiple Failures - SMI (3-March-2017)
 Agent/TCP set srcLeaf_ 0
 Agent/TCP set destLeaf_ 0
-Agent/TCP set multipleFailure_ 0
+##Agent/TCP set multipleFailure_ 0
 Agent/TCP set numFailures_ 0
-Agent/TCP set failedLinkLeaf_ 0
-Agent/TCP set secondFailedLinkLeaf_ 0
-Agent/TCP set secondFailedLinkSpine_ 0
-Agent/TCP set flowFacingMultipleFailures_ 0
+# Agent/TCP set failedLinkLeaf_ 0
+# Agent/TCP set secondFailedLinkLeaf_ 0
+# Agent/TCP set secondFailedLinkSpine_ 0
+#Agent/TCP set flowFacingMultipleFailures_ 0
+
+# Added on 21-June-17 SMI
+Agent/TCP set flowsizeBytes 0
+Agent/TCP set healthyLinkCapacity 1
 
 # Added on 25-March SMI
 #Agent/TCP set perPacketMP_ false;
