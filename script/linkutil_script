@@ -1,0 +1,52 @@
+#!/bin/bash
+ 
+l0=$(grep "0 4 tcp 1500" out.tr | egrep -c ^r)
+l1=$(grep "0 5 tcp 1500" out.tr | egrep -c ^r)
+l2=$(grep "0 6 tcp 1500" out.tr | egrep -c ^r)
+l3=$(grep "0 7 tcp 1500" out.tr | egrep -c ^r)
+
+grep "0 4 tcp 1500" out.tr | egrep ^r > 0_4.log
+grep "0 5 tcp 1500" out.tr | egrep ^r > 0_5.log
+grep "0 6 tcp 1500" out.tr | egrep ^r > 0_6.log
+grep "0 7 tcp 1500" out.tr | egrep ^r > 0_7.log
+
+l0FP=$(head -1 0_4.log | cut -d' ' -f 2)
+l1FP=$(head -1 0_5.log | cut -d' ' -f 2)
+l2FP=$(head -1 0_6.log | cut -d' ' -f 2)
+l3FP=$(head -1 0_7.log | cut -d' ' -f 2)
+
+l0LP=$(tail -1 0_4.log | cut -d' ' -f 2)
+l1LP=$(tail -1 0_5.log | cut -d' ' -f 2)
+l2LP=$(tail -1 0_6.log | cut -d' ' -f 2)
+l3LP=$(tail -1 0_7.log | cut -d' ' -f 2)
+
+
+t0=`echo $l0LP-$l0FP | bc -l`
+t1=`echo $l1LP-$l1FP | bc -l`
+t2=`echo $l2LP-$l2FP | bc -l`
+t3=`echo $l3LP-$l3FP | bc -l`
+
+tp0=`echo "($l0*1500*8) / ($t0*1000000)" | bc -l`
+tp1=`echo "($l1*1500*8) / ($t1*1000000)" | bc -l`
+tp2=`echo "($l2*1500*8) / ($t2*1000000)" | bc -l`
+tp3=`echo "($l3*1500*8) / ($t3*1000000)" | bc -l`
+
+
+echo "***************************************************"
+echo "* Packets Sent on each link ~ Links 0 to 3 *"
+echo "***************************************************"
+echo $l0
+echo $l1
+echo $l2
+echo $l3
+echo " "
+echo "***************************************************"
+echo "*  Throughput on each link (Mbps) ~ Links 0 to 3 *"
+echo "***************************************************"
+echo $tp0
+echo $tp1
+echo $tp2
+echo $tp3
+
+
+
