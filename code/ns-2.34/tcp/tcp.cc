@@ -1093,9 +1093,8 @@ void TcpAgent::output(int seqno, int reason)
 				}
 			}
 
-			printf("DEBUG: tcp:output() ndatapack_=%d svtMapping=%d \n", (int) ndatapack_, svtMapping);
-
 			if(debug_tcp_smi) {
+				printf("DEBUG: tcp:output() ndatapack_=%d svtMapping=%d \n", (int) ndatapack_, svtMapping);
 				printf("DEBUG-0: 1st PKT of FLOW: numDirectFailures_=%d \n", numDirectFailures_);
 			}
 
